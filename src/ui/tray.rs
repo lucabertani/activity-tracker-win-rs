@@ -23,6 +23,7 @@ pub const WM_TRAYICON: u32 = 0x0400 + 1;
 //pub const TRAY_BG_COLOR: u32 = 0x00800040; // #400080
 //pub const TRAY_BG_COLOR: u32 = 0x00353138; // #cbc6ce
 pub const TRAY_BG_COLOR: u32 = 0x003e3e3e; // #3e3e3e
+pub const TRAY_BG_RED: u32 = 0x0000FF; // #ff0000, used while thermal-throttling
 pub const TRAY_TEXT_COLOR: u32 = 0x00FFFFFF; // #ffffff
 
 // Font settings.
@@ -128,6 +129,7 @@ pub fn destroy_icon(
 
 pub fn build_percentage_icon(
     percent: u32,
+    red: bool,
 ) -> windows_sys::Win32::UI::WindowsAndMessaging::HICON {
     let value = percent.min(100);
 
@@ -178,7 +180,11 @@ pub fn build_percentage_icon(
             SelectObject(mem_dc, color_bmp as HGDIOBJ);
 
         // Background
-        let background = CreateSolidBrush(TRAY_BG_COLOR);
+        let background = CreateSolidBrush(if red {
+            TRAY_BG_RED
+        } else {
+            TRAY_BG_COLOR
+        });
 
         if !background.is_null() {
             let rect = RECT {
@@ -298,4 +304,53 @@ fn wide(value: &str) -> Vec<u16> {
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_percentage_icon;
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetPixel,
+        SelectObject, ReleaseDC, HGDIOBJ,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{DI_NORMAL, DrawIconEx};
+
+    /// Renders the icon into an off-screen DC and returns the COLORREF of
+    /// the pixel at (2,2) (a background corner: the percentage text is
+    /// centered, so corners are always background).
+    fn corner_pixel(icon: windows_sys::Win32::UI::WindowsAndMessaging::HICON) -> u32 {
+        unsafe {
+            let screen = GetDC(std::ptr::null_mut());
+            let mem = CreateCompatibleDC(screen);
+            let bmp = CreateCompatibleBitmap(screen, 16, 16);
+            let old = SelectObject(mem, bmp as HGDIOBJ);
+            let _ = DrawIconEx(mem, 0, 0, icon, 16, 16, 0, std::ptr::null_mut(), DI_NORMAL);
+            let px = GetPixel(mem, 2, 2);
+            let _ = SelectObject(mem, old);
+            let _ = DeleteObject(bmp as HGDIOBJ);
+            let _ = DeleteDC(mem);
+            let _ = ReleaseDC(std::ptr::null_mut(), screen);
+            px
+        }
+    }
+
+    #[test]
+    fn thermal_icon_is_red_normal_icon_is_dark() {
+        let red = build_percentage_icon(42, true);
+        let normal = build_percentage_icon(42, false);
+        assert!(!red.is_null() && !normal.is_null());
+
+        // COLORREF is 0x00BBGGRR.
+        let red_px = corner_pixel(red);
+        assert!(
+            (red_px & 0xFF) > 0x80 && ((red_px >> 8) & 0xFF) < 0x80 && ((red_px >> 16) & 0xFF) < 0x80,
+            "throttling icon should be red, got 0x{red_px:06X}"
+        );
+
+        let normal_px = corner_pixel(normal);
+        assert!(
+            (normal_px & 0xFF) < 0x80 && ((normal_px >> 8) & 0xFF) < 0x80,
+            "normal icon should be the dark background, got 0x{normal_px:06X}"
+        );
+    }
 }

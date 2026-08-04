@@ -31,7 +31,7 @@ use crate::ui::tray::{
 use crate::ui::window::{
     IDC_APPLY_SETTINGS, IDC_HEADER_CPU_THROTTLE, IDC_HEADER_RAM, IDC_INTERVAL_EDIT, IDC_SEARCH,
     IDC_SORT_MEMORY, IDC_PROCESS_LIST, IDC_SORT_NAME, IDC_START_IN_BACKGROUND,
-    IDC_START_ON_WINDOWS, IDC_TERMINATE_PROCESS,
+    IDC_START_ON_WINDOWS, IDC_TERMINATE_PROCESS, IDC_TRAY_THERMAL_RED,
     create_controls,
     create_main_window, get_control_text, hide_main_window, is_checkbox_checked,
     register_main_window_class, selected_process_row, set_checkbox, set_label_text,
@@ -99,9 +99,13 @@ pub fn run() -> AppResult<()> {
         return Err(AppError::WinApi("CreateWindowExW failed"));
     }
 
+    // Hide the window only when explicitly requested: started by Windows
+    // autostart (--background) or the "window_start_hidden" setting.
+    // A manual double-click always shows the window, even if
+    // "Avvio in background" is enabled.
     let start_hidden = unsafe {
         let state = &*state_ptr;
-        state.settings.start_in_background || state.settings.window_start_hidden || start_in_background_from_cli
+        state.settings.window_start_hidden || start_in_background_from_cli
     };
 
     if start_hidden {
@@ -136,6 +140,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             if let Some(state) = get_state_mut(hwnd) {
                 set_checkbox(hwnd, IDC_START_ON_WINDOWS, state.settings.start_on_windows);
                 set_checkbox(hwnd, IDC_START_IN_BACKGROUND, state.settings.start_in_background);
+                set_checkbox(hwnd, IDC_TRAY_THERMAL_RED, state.settings.tray_icon_thermal_red);
                 set_label_text(
                     hwnd,
                     IDC_INTERVAL_EDIT,
@@ -143,7 +148,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                 );
 
                 let initial_tip = format!("RAM {}", state.current_ram_percent);
-                state.tray_icon = build_percentage_icon(state.current_ram_percent);
+                state.tray_icon = build_percentage_icon(state.current_ram_percent, false);
                 let _ = add_tray_icon(hwnd, &initial_tip, state.tray_icon);
 
                 let _ = SetTimer(
@@ -201,6 +206,14 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                     }
                 }
                 IDC_APPLY_SETTINGS if notify == BN_CLICKED as u16 => {
+                    apply_settings_from_ui(hwnd);
+                }
+                // Settings checkboxes save immediately on click (no need to
+                // press "Applica"): the user expects the flag to persist
+                // as soon as it is toggled.
+                (IDC_START_ON_WINDOWS | IDC_START_IN_BACKGROUND | IDC_TRAY_THERMAL_RED)
+                    if notify == BN_CLICKED as u16 =>
+                {
                     apply_settings_from_ui(hwnd);
                 }
                 IDC_TERMINATE_PROCESS if notify == BN_CLICKED as u16 => {
@@ -321,6 +334,9 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
         if cpu_throttling { "CPU thermal throttling" } else { "" },
     );
 
+    // Tray icon turns red while throttling when the option is enabled.
+    let tray_red = state.settings.tray_icon_thermal_red && cpu_throttling;
+
     if let Ok((ram_percent, total_ram_bytes)) = total_memory_status() {
         state.current_ram_percent = ram_percent;
 
@@ -331,7 +347,7 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
         );
         update_tray_tooltip(hwnd, &format!("RAM {}", state.current_ram_percent));
 
-        let new_icon = build_percentage_icon(state.current_ram_percent);
+        let new_icon = build_percentage_icon(state.current_ram_percent, tray_red);
         if !new_icon.is_null() {
             update_tray_icon(hwnd, new_icon);
             if !state.tray_icon.is_null() {
@@ -358,15 +374,22 @@ fn apply_settings_from_ui(hwnd: HWND) {
     let mut new_settings = state.settings.clone();
     new_settings.start_on_windows = is_checkbox_checked(hwnd, IDC_START_ON_WINDOWS);
     new_settings.start_in_background = is_checkbox_checked(hwnd, IDC_START_IN_BACKGROUND);
+    new_settings.tray_icon_thermal_red = is_checkbox_checked(hwnd, IDC_TRAY_THERMAL_RED);
 
     let interval_text = get_control_text(hwnd, IDC_INTERVAL_EDIT);
     new_settings.refresh_interval_seconds =
         parse_refresh_interval_seconds(&interval_text, state.settings.refresh_interval_seconds);
 
-    if new_settings.start_on_windows != state.settings.start_on_windows {
+    if new_settings.start_on_windows != state.settings.start_on_windows
+        || new_settings.start_in_background != state.settings.start_in_background
+    {
         match std::env::current_exe() {
             Ok(exe) => {
-                if let Err(err) = set_autostart(new_settings.start_on_windows, &exe) {
+                if let Err(err) = set_autostart(
+                    new_settings.start_on_windows,
+                    new_settings.start_in_background,
+                    &exe,
+                ) {
                     show_error(hwnd, &format!("Errore aggiornamento autostart: {err}"));
                 }
             }

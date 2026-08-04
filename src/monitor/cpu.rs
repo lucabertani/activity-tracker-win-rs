@@ -2,6 +2,8 @@ use sysinfo::{CpuRefreshKind, RefreshKind, System};
 use winreg::enums::HKEY_LOCAL_MACHINE;
 use winreg::RegKey;
 
+use super::msr::MsrThermalMonitor;
+
 /// A core counts as "under load" when its usage reaches this percentage.
 const USAGE_THRESHOLD_PERCENT: f32 = 60.0;
 /// A core is considered throttled when its current clock drops to this
@@ -19,14 +21,10 @@ const MIN_CONSECUTIVE_TICKS: u32 = 2;
 
 /// Monitors CPU cores for thermal throttling.
 ///
-/// Windows has no user-mode API that reports "thermal throttling" directly
-/// (that requires MSRs / a kernel driver), so we use the standard proxy:
-/// a core is throttling when it is under load (usage >= `USAGE_THRESHOLD_PERCENT`)
-/// while its current frequency is capped well below the frequency that core
-/// normally reaches. The per-core reference is seeded at startup (from the
-/// OS-rated frequency when the core is already running near it, otherwise
-/// from the current clock) and ratchets up to the highest clock observed
-/// while the app runs, so a throttled CPU that recovers re-arms detection.
+/// Primary signal (HWiNFO-style, when the WinRing0 kernel driver is
+/// installed): per-core MSR `IA32_THERM_STATUS` bit 0 — the exact flag
+/// HWiNFO reads. Falls back to a frequency+load heuristic when the driver
+/// is not available (no admin rights / not installed).
 ///
 /// The check runs on the same refresh timer as the RAM percentage. As soon
 /// as a single core satisfies the condition (for two consecutive ticks), the
@@ -35,6 +33,7 @@ pub struct CpuThrottleMonitor {
     system: System,
     core_max_mhz: Vec<u64>,
     consecutive_throttle_ticks: u32,
+    msr: Option<MsrThermalMonitor>,
 }
 
 impl Default for CpuThrottleMonitor {
@@ -52,6 +51,7 @@ impl CpuThrottleMonitor {
             ),
             core_max_mhz: Vec::new(),
             consecutive_throttle_ticks: 0,
+            msr: MsrThermalMonitor::open(),
         }
     }
 
@@ -63,6 +63,28 @@ impl CpuThrottleMonitor {
     /// Refreshes per-core usage and frequency, and returns `true` when at
     /// least one core appears to be thermal-throttling.
     pub fn refresh(&mut self) -> bool {
+        // HWiNFO-style MSR path: authoritative when the driver is available.
+        // Re-probe on every refresh so a driver installed while the app is
+        // running gets picked up (opening a missing device is cheap).
+        if self.msr.is_none() {
+            self.msr = MsrThermalMonitor::open();
+        }
+        let throttling = if let Some(msr) = &self.msr {
+            msr.refresh()
+        } else {
+            self.refresh_frequency_heuristic()
+        };
+
+        if throttling {
+            self.consecutive_throttle_ticks += 1;
+        } else {
+            self.consecutive_throttle_ticks = 0;
+        }
+        self.consecutive_throttle_ticks >= MIN_CONSECUTIVE_TICKS
+    }
+
+    /// Frequency+load fallback used when the kernel driver is not installed.
+    fn refresh_frequency_heuristic(&mut self) -> bool {
         self.system.refresh_cpu_all();
 
         let cpus = self.system.cpus();
@@ -87,13 +109,7 @@ impl CpuThrottleMonitor {
                 throttling = true;
             }
         }
-
-        if throttling {
-            self.consecutive_throttle_ticks += 1;
-        } else {
-            self.consecutive_throttle_ticks = 0;
-        }
-        self.consecutive_throttle_ticks >= MIN_CONSECUTIVE_TICKS
+        throttling
     }
 }
 

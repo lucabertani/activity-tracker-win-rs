@@ -57,6 +57,9 @@ pub struct AppSettings {
     pub refresh_interval_seconds: u64,
     pub window_start_hidden: bool,
     pub show_tray_tooltip: bool,
+    /// Turn the tray icon red while the CPU is thermal-throttling.
+    #[serde(default)]
+    pub tray_icon_thermal_red: bool,
 }
 
 impl Default for AppSettings {
@@ -67,6 +70,7 @@ impl Default for AppSettings {
             refresh_interval_seconds: 3,
             window_start_hidden: false,
             show_tray_tooltip: true,
+            tray_icon_thermal_red: false,
         }
     }
 }
@@ -112,5 +116,15 @@ mod tests {
         assert_eq!(parse_refresh_interval_seconds("0", 3), 1);
         assert_eq!(parse_refresh_interval_seconds("999", 3), 60);
         assert_eq!(parse_refresh_interval_seconds("abc", 3), 3);
+    }
+
+    #[test]
+    fn old_settings_json_without_new_field_still_loads() {
+        // Settings saved by a previous version of the app have no
+        // tray_icon_thermal_red field: it must default to false.
+        let json = r#"{"start_on_windows":true,"start_in_background":true,"refresh_interval_seconds":5,"window_start_hidden":false,"show_tray_tooltip":true}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(!settings.tray_icon_thermal_red);
+        assert_eq!(settings.refresh_interval_seconds, 5);
     }
 }

@@ -18,6 +18,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 pub const IDC_HEADER_RAM: i32 = 2001;
 pub const IDC_HEADER_CPU_THROTTLE: i32 = 2011;
+pub const IDC_TRAY_THERMAL_RED: i32 = 2012;
 pub const IDC_SEARCH: i32 = 2002;
 pub const IDC_SORT_NAME: i32 = 2003;
 pub const IDC_SORT_MEMORY: i32 = 2004;
@@ -171,6 +172,21 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
             24,
             hwnd,
             menu_id(IDC_START_IN_BACKGROUND),
+            hinstance,
+            std::ptr::null(),
+        );
+
+        let _ = CreateWindowExW(
+            0,
+            wide("BUTTON").as_ptr(),
+            wide("Thermal throttling su task icon").as_ptr(),
+            WS_CHILD | WS_VISIBLE | (BS_AUTOCHECKBOX as u32),
+            20,
+            595,
+            300,
+            24,
+            hwnd,
+            menu_id(IDC_TRAY_THERMAL_RED),
             hinstance,
             std::ptr::null(),
         );

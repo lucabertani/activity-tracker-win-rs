@@ -20,7 +20,11 @@ pub fn load_settings() -> AppResult<AppSettings> {
     }
 
     let raw = fs::read_to_string(path)?;
-    let parsed = serde_json::from_str::<AppSettings>(&raw)?;
+    // Tolerate a UTF-8 BOM: some editors / PowerShell write one, and
+    // serde_json refuses to parse it (which would silently reset all
+    // settings to their defaults).
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+    let parsed = serde_json::from_str::<AppSettings>(raw)?;
     Ok(parsed.normalized())
 }
 
