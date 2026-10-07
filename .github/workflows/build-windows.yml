@@ -1,0 +1,55 @@
+name: Build Windows release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.1.0)"
+        required: true
+        default: "0.1.0"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # Static CRT linking (+crt-static) so the exe is fully standalone:
+      # no VC++ redistributable needed on the target machine.
+      - name: Build release (static CRT)
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Upload standalone executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: activity-tracker-win-rs-windows-x64
+          path: target/x86_64-pc-windows-msvc/release/activity-tracker-win-rs.exe
+
+      # Releases are created only on manual runs, where the version input
+      # exists: title "activity tracker v<version>", tag "v<version>".
+      # The driver/ folder ships with the release so users can install the
+      # MSR driver without cloning the repo.
+      - name: Create GitHub release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: "activity tracker v${{ github.event.inputs.version }}"
+          files: |
+            target/x86_64-pc-windows-msvc/release/activity-tracker-win-rs.exe
+            driver/
