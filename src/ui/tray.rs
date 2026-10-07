@@ -1,11 +1,12 @@
 use std::mem;
 
-use windows_sys::Win32::Foundation::{HWND, RECT};
+use windows_sys::Win32::Foundation::{HWND, RECT, SIZE};
 use windows_sys::Win32::Graphics::Gdi::{
-    ANTIALIASED_QUALITY, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush,
-    DEFAULT_CHARSET, DEFAULT_PITCH, DeleteDC, DeleteObject, FF_DONTCARE, FillRect, GetDC, HBRUSH,
-    HGDIOBJ, OUT_DEFAULT_PRECIS, ReleaseDC, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
-    TextOutW,
+    ANTIALIASED_QUALITY, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap,
+    CreateCompatibleDC, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET, DEFAULT_PITCH,
+    DIB_RGB_COLORS, DeleteDC, DeleteObject, FF_DONTCARE, FillRect, GetDC, GetDIBits,
+    GetTextExtentPoint32W, HBRUSH, HGDIOBJ, OUT_DEFAULT_PRECIS, ReleaseDC, SelectObject, SetBkMode,
+    SetDIBits, SetTextColor, TRANSPARENT, TextOutW,
 };
 use windows_sys::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
@@ -37,7 +38,8 @@ pub const TRAY_FONT_NAME: &str = "Segoe UI";
 //pub const TRAY_FONT_NAME: &str = "Verdana";
 pub const TRAY_FONT_WEIGHT: i32 = 350;
 
-// Font height = (icon_height - offset).max(min_px), per digit count.
+// Font height = (icon_height - offset).max(min_px), per digit count
+// (automatic mode only; an explicit size from the settings is used as-is).
 pub const TRAY_FONT_OFFSET_1: i32 = 2;
 pub const TRAY_FONT_MIN_1: i32 = 16;
 pub const TRAY_FONT_OFFSET_2: i32 = 3;
@@ -45,9 +47,10 @@ pub const TRAY_FONT_MIN_2: i32 = 18;
 pub const TRAY_FONT_OFFSET_3: i32 = 5;
 pub const TRAY_FONT_MIN_3: i32 = 10;
 
-// Estimated pixel width per character used for horizontal centering.
-pub const TRAY_CHAR_PX_NORMAL: i32 = 7;
-pub const TRAY_CHAR_PX_WIDE: i32 = 5;
+// The icon is drawn at this multiple of its size and box-filtered back
+// down: GDI grid-fits small fonts, so without supersampling 15 px and
+// 16 px would rasterize identically. It also gives smoother edges.
+const ICON_SUPERSAMPLE: i32 = 4;
 
 // Minimum icon size fallback.
 pub const TRAY_ICON_MIN_SIZE: i32 = 16;
@@ -193,9 +196,15 @@ pub fn build_text_icon(
 
     let height = unsafe { GetSystemMetrics(SM_CYSMICON) }.max(TRAY_ICON_MIN_SIZE);
 
+    let ss = ICON_SUPERSAMPLE;
+    let big_w = width * ss;
+    let big_h = height * ss;
+
     let digits = text.chars().count() as i32;
 
-    let font_height = if font_size != 0 {
+    // Automatic size in final-icon pixels; an explicit size is used as-is
+    // (floor at 6 px), so every step of the settings combo is visible.
+    let unit_font_height = if font_size != 0 {
         (font_size as i32).max(6)
     } else {
         match digits {
@@ -204,6 +213,7 @@ pub fn build_text_icon(
             _ => (height - TRAY_FONT_OFFSET_3).max(TRAY_FONT_MIN_3),
         }
     };
+    let font_height = unit_font_height * ss;
 
     unsafe {
         let screen_dc = GetDC(std::ptr::null_mut());
@@ -219,31 +229,31 @@ pub fn build_text_icon(
             return std::ptr::null_mut();
         }
 
-        let color_bmp = CreateCompatibleBitmap(screen_dc, width, height);
+        let big_bmp = CreateCompatibleBitmap(screen_dc, big_w, big_h);
 
-        if color_bmp.is_null() {
+        if big_bmp.is_null() {
             let _ = DeleteDC(mem_dc);
             let _ = ReleaseDC(std::ptr::null_mut(), screen_dc);
             return std::ptr::null_mut();
         }
 
-        let old_obj = SelectObject(mem_dc, color_bmp as HGDIOBJ);
+        let old_obj = SelectObject(mem_dc, big_bmp as HGDIOBJ);
 
-        // Background
+        // Background (full supersampled area)
         let background = CreateSolidBrush(bg);
 
         if !background.is_null() {
             let rect = RECT {
                 left: 0,
                 top: 0,
-                right: width,
-                bottom: height,
+                right: big_w,
+                bottom: big_h,
             };
 
             let _ = FillRect(mem_dc, &rect, background as HBRUSH);
         }
 
-        // Font
+        // Font (height scaled by the supersample factor)
         let font_name = wide(TRAY_FONT_NAME);
 
         let font = CreateFontW(
@@ -270,21 +280,103 @@ pub fn build_text_icon(
         let _ = SetBkMode(mem_dc, TRANSPARENT as i32);
         let _ = SetTextColor(mem_dc, fg);
 
-        // Text rendering
+        // Exact text extent for perfect centering (no per-character guess).
         let text_w: Vec<u16> = text.encode_utf16().collect();
 
-        let per_char = if digits >= 3 {
-            TRAY_CHAR_PX_WIDE
-        } else {
-            TRAY_CHAR_PX_NORMAL
-        };
+        let mut extent: SIZE = mem::zeroed();
+        let _ = GetTextExtentPoint32W(mem_dc, text_w.as_ptr(), text_w.len() as i32, &mut extent);
 
-        let text_px = (digits * per_char).max(6);
+        let x = ((big_w - extent.cx) / 2).max(0);
+        let y = ((big_h - extent.cy) / 2).max(0);
 
-        let x = (width - text_px) / 2;
-        let y = ((height - font_height) / 2).max(0);
+        let _ = TextOutW(mem_dc, x, y, text_w.as_ptr(), text_w.len() as i32);
 
-        let _ = TextOutW(mem_dc, x.max(0), y, text_w.as_ptr(), text_w.len() as i32);
+        // Read back the supersampled buffer (0xAARRGGBB, top-down).
+        let mut big_bmi = dib_info(big_w, big_h);
+        let mut big_buf = vec![0u8; (big_w * big_h * 4) as usize];
+
+        let read_lines = GetDIBits(
+            mem_dc,
+            big_bmp,
+            0,
+            big_h as u32,
+            big_buf.as_mut_ptr() as *mut _,
+            &mut big_bmi,
+            DIB_RGB_COLORS,
+        );
+
+        if read_lines <= 0 {
+            if !font.is_null() {
+                let _ = DeleteObject(font as HGDIOBJ);
+            }
+            if !background.is_null() {
+                let _ = DeleteObject(background as HGDIOBJ);
+            }
+            let _ = SelectObject(mem_dc, old_obj);
+            let _ = DeleteObject(big_bmp as HGDIOBJ);
+            let _ = DeleteDC(mem_dc);
+            let _ = ReleaseDC(std::ptr::null_mut(), screen_dc);
+            return std::ptr::null_mut();
+        }
+
+        // Box-filter downscale: each output pixel is the average of its
+        // ss x ss block. The icon is fully opaque, so alpha stays 0xFF.
+        let mut small_buf = vec![0u8; (width * height * 4) as usize];
+
+        for py in 0..height {
+            for px in 0..width {
+                let (mut r, mut g, mut b) = (0u32, 0u32, 0u32);
+
+                for dy in 0..ss {
+                    for dx in 0..ss {
+                        let i = (((py * ss + dy) as usize) * big_w as usize
+                            + (px * ss + dx) as usize)
+                            * 4;
+                        r += big_buf[i + 2] as u32;
+                        g += big_buf[i + 1] as u32;
+                        b += big_buf[i] as u32;
+                    }
+                }
+
+                let n = (ss * ss) as u32;
+                let o = ((py as usize) * width as usize + px as usize) * 4;
+                small_buf[o] = (b / n) as u8;
+                small_buf[o + 1] = (g / n) as u8;
+                small_buf[o + 2] = (r / n) as u8;
+                small_buf[o + 3] = 0xFF;
+            }
+        }
+
+        let color_bmp = CreateCompatibleBitmap(screen_dc, width, height);
+
+        if color_bmp.is_null() {
+            if !font.is_null() {
+                let _ = DeleteObject(font as HGDIOBJ);
+            }
+            if !background.is_null() {
+                let _ = DeleteObject(background as HGDIOBJ);
+            }
+            let _ = SelectObject(mem_dc, old_obj);
+            let _ = DeleteObject(big_bmp as HGDIOBJ);
+            let _ = DeleteDC(mem_dc);
+            let _ = ReleaseDC(std::ptr::null_mut(), screen_dc);
+            return std::ptr::null_mut();
+        }
+
+        let small_bmi = dib_info(width, height);
+        let _ = SetDIBits(
+            mem_dc,
+            color_bmp,
+            0,
+            height as u32,
+            small_buf.as_ptr() as *const _,
+            &small_bmi,
+            DIB_RGB_COLORS,
+        );
+
+        // Cleanup of the supersampled buffer; the final icon keeps its own
+        // copies of the bitmaps below.
+        let _ = DeleteObject(big_bmp as HGDIOBJ);
 
         // Mask bitmap
         let mask_bmp = CreateCompatibleBitmap(screen_dc, width, height);
@@ -318,6 +410,27 @@ pub fn build_text_icon(
         let _ = ReleaseDC(std::ptr::null_mut(), screen_dc);
 
         icon
+    }
+}
+
+/// Top-down 32-bit DIB header for read/write-back of screen-compatible
+/// bitmaps (the memory layout is the raw 0xAARRGGBB pixels).
+fn dib_info(width: i32, height: i32) -> BITMAPINFO {
+    BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB,
+            biSizeImage: 0,
+            biXPelsPerMeter: 0,
+            biYPelsPerMeter: 0,
+            biClrUsed: 0,
+            biClrImportant: 0,
+        },
+        ..Default::default()
     }
 }
 
