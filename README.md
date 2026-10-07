@@ -1,61 +1,84 @@
 # Activity Tracker (Win32 + Rust)
 
-Monitor RAM and per-core CPU thermal throttling (HWiNFO-style) from the tray.
+Monitor total RAM usage, average CPU core temperature and per-core thermal
+throttling (HWiNFO-style) from the system tray.
 
-## Requisiti
+> **Don't want to compile?** Grab the prebuilt executable from the
+> [latest release](https://github.com/lucabertani/activity-tracker-win-rs/releases/latest)
+> (`activity-tracker-win-rs.exe`, self-contained, no VC++ redistributable needed).
+> The driver for real temperatures is bundled in the release as well — see
+> [below](#cpu-temperature-and-thermal-throttling-driver).
+
+## Requirements
 
 - Windows 10/11 x64
-- [Rust](https://rustup.rs) con toolchain MSVC (`rustup default stable-x86_64-pc-windows-msvc`)
-- Visual Studio Build Tools (C++), oppure Visual Studio con "Desktop development with C++"
+- [Rust](https://rustup.rs) with the MSVC toolchain (`rustup default stable-x86_64-pc-windows-msvc`)
+- Visual Studio Build Tools (C++), or Visual Studio with "Desktop development with C++"
 
-## Compilare
+## Build
 
 ```bash
 cargo build --release
 ```
 
-Eseguibile generato: `target\release\activity-tracker-win-rs.exe` (autonomo, non serve il redistribuibile VC++).
+Resulting executable: `target\release\activity-tracker-win-rs.exe`
+(self-contained, no VC++ redistributable needed).
 
-## Avviare
+## Run
 
-1. Doppio click su `target\release\activity-tracker-win-rs.exe`.
-2. La finestra si apre. Se non la vedi: cerca l'icona nella tray (freccia `^` accanto all'orologio) e fai doppio click su di essa.
-3. Da terminale: `target\release\activity-tracker-win-rs.exe` (aggiungi `--background` per avviare nascosto nella tray).
+1. Double-click `target\release\activity-tracker-win-rs.exe`.
+2. The main window opens. If you don't see it: look for the icon in the
+   tray (the `^` arrow next to the clock) and double-click it.
+3. From a terminal: `target\release\activity-tracker-win-rs.exe`
+   (add `--background` to start hidden in the tray).
 
-## Rilevamento thermal throttling (opzionale, consigliato)
+## CPU temperature and thermal throttling (driver)
 
-Senza driver, l'app usa un'euristica frequenza+carico. Con il driver legge il flag MSR reale (`IA32_THERM_STATUS`) come HWiNFO — basta 1 core in throttle per mostrare la scritta rossa.
+The driver (bundled in this repo under [`driver/`](driver/) and in the
+[latest release](https://github.com/lucabertani/activity-tracker-win-rs/releases/latest))
+enables real per-core MSR reads. **Install it once** (admin/UAC required):
 
-Installa il driver **una sola volta** (serve admin, UAC):
-
-1. Apri PowerShell come amministratore.
-2. Esegui:
+1. Open PowerShell as administrator.
+2. Run (from the project folder or the release folder):
    ```powershell
-   cd <cartella-del-progetto>
    powershell -ExecutionPolicy Bypass -File .\driver\install-driver.ps1
    ```
-3. Verifica che lo stato sia RUNNING:
+3. Verify the state is RUNNING:
    ```powershell
    sc.exe query WinRing0_1_2_0
    ```
-4. Il driver si carica da solo a ogni avvio di Windows (`start= system`): **nessun admin richiesto in seguito**, né all'avvio né per l'app.
+4. The driver loads by itself at every Windows boot (`start= system`):
+   **no admin needed afterwards**, neither at boot nor for the app.
 
-Per disinstallare il driver (sempre da PowerShell admin):
+To uninstall the driver (again from an admin PowerShell):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\driver\install-driver.ps1 -Uninstall
 ```
 
-## Test e diagnostica
+See [`driver/README.md`](driver/README.md) for details.
+
+Without the driver, the app falls back to a frequency+load heuristic and
+cannot read temperatures (the "CPU avg" label shows `n/a`). With the driver,
+it reads the real per-core MSR flag (`IA32_THERM_STATUS`) exactly like HWiNFO
+— a single throttled core is enough to show the red warning — and reports the
+average core temperature from the same register (no extra reads).
+
+## Tests and diagnostics
 
 ```bash
-cargo test                          # test di unità/integrazione
-cargo run --example msr_probe       # temperature e flag throttling per-core (richiede il driver)
-cargo run --example cpu_probe       # frequenze e utilizzo per-core + verdetto throttling
+cargo test                          # unit/integration tests
+cargo run --example msr_probe       # per-core temperatures and throttle flags (requires the driver)
+cargo run --example cpu_probe       # per-core frequencies/usage + throttle verdict
 ```
 
-## Note
+## Notes
 
-- Chiudi l'app prima di ricompilare: Windows blocca l'exe in esecuzione (`cargo build` fallisce con "Access is denied").
-- Avvio automatico: spunta "Avvio automatico con Windows" e "Avvio in background" nella finestra dell'app. Il doppio click manuale mostra sempre la finestra; solo l'avvio da autostart parte nascosto.
-- Sicurezza: il driver WinRing0 permette a qualsiasi utente locale di leggere/scrivere MSR (come HWiNFO/CrystalDiskInfo). OK su macchina personale a utente singolo; vedi `driver/README.md`.
+- Close the app before rebuilding: Windows locks the running exe
+  (`cargo build` fails with "Access is denied").
+- Autostart: tick "Start automatically with Windows" and "Start in
+  background" in the app window. A manual double-click always shows the
+  window; only the autostart launch starts hidden.
+- Security: the WinRing0 driver lets any local user read/write CPU MSRs
+  (like HWiNFO/CrystalDiskInfo). Fine on a personal single-user machine;
+  see `driver/README.md`.

@@ -1,102 +1,104 @@
-# Windows Activity Tracker - Specifica tecnica e piano di implementazione
+# Windows Activity Tracker - Technical specification and implementation plan
 
-## Obiettivo
-Realizzare un'applicazione desktop per Windows scritta in Rust, nativa, a basso consumo di risorse, senza usare framework web come Electron, Tauri o simili.
+## Goal
+Build a native Windows desktop application written in Rust, with low resource
+consumption and without using web frameworks like Electron, Tauri or similar.
 
-L'app deve:
-- monitorare l'utilizzo totale della RAM in percentuale, mostrando solo il numero da 0 a 100 senza il simbolo `%`
-- mostrare una finestra principale con il dettaglio RAM per singolo processo
-- permettere ricerca testuale case-insensitive sui processi attivi
-- permettere ordinamento per nome processo e per RAM occupata, sia ASC che DESC
-- mostrare un'icona nella taskbar / system tray con il valore della RAM totale occupata in percentuale, senza simbolo
-- nascondere la finestra principale quando l'app viene ridotta a icona o chiusa, mantenendo attivo solo il tray icon
-- offrire una sezione Impostazioni con:
-  - avvio automatico con Windows seguendo le best practice di startup su Windows
-  - avvio in background che mostra solo l'icona nel tray
-  - intervallo di aggiornamento della RAM totale in secondi
-- aprire la finestra principale con doppio click sull'icona tray
-- aprire un menu contestuale con click destro sull'icona tray per aprire la finestra principale o uscire definitivamente
+The app must:
+- monitor total RAM usage as a percentage, showing only the number from 0 to 100 without the `%` symbol
+- show a main window with per-process RAM details
+- allow case-insensitive textual search over active processes
+- allow sorting by process name and by RAM used, both ASC and DESC
+- show an icon in the taskbar / system tray with the total RAM usage percentage, without the symbol
+- hide the main window when the app is minimized or closed, keeping only the tray icon alive
+- offer a Settings section with:
+  - automatic startup with Windows, following Windows startup best practices
+  - background startup that shows only the tray icon
+  - total RAM refresh interval in seconds
+- open the main window on double-click of the tray icon
+- open a context menu on right-click of the tray icon, to open the main window or quit for good
 
-## Vincoli non funzionali
-1. Usare la minor quantità possibile di RAM e CPU.
-2. Integrare la presenza dell'app nel tray di Windows.
-3. Non usare tecnologie web.
-4. Usare Rust.
-5. Preferire una UX semplice e robusta invece di animazioni o rendering complessi.
+## Non-functional constraints
+1. Use the smallest possible amount of RAM and CPU.
+2. Integrate the app's presence into the Windows tray.
+3. Do not use web technologies.
+4. Use Rust.
+5. Prefer a simple and robust UX over animations or complex rendering.
 
-## Scelta tecnica consigliata
-Per rispettare i vincoli, la soluzione più adatta è una app Rust nativa basata su API Windows dirette.
+## Recommended technical choice
+To respect the constraints, the best fit is a native Rust app based on direct
+Windows APIs.
 
-### Stack consigliato
-- Linguaggio: Rust stabile
-- GUI: Win32 API native tramite crate `windows` oppure `windows-sys`
+### Recommended stack
+- Language: stable Rust
+- GUI: native Win32 API via the `windows` or `windows-sys` crate
 - Tray icon: `Shell_NotifyIconW`
-- Finestra principale: Win32 window class + controlli standard Windows
-- Lista processi: `ListView` in modalità virtuale oppure controllo equivalente nativo
-- Persistenza impostazioni: file locale in `%AppData%` o registry per poche preferenze
-- Autostart: supporto primario tramite Startup Task se l'app sarà pacchettizzata, altrimenti chiave `Run` nel registry per installazione classica
-- Enumerazione processi: API Windows native
-- Lettura memoria totale: `GlobalMemoryStatusEx`
-- Lettura memoria per processo: `GetProcessMemoryInfo` o API equivalenti native
+- Main window: Win32 window class + standard Windows controls
+- Process list: `ListView` in virtual mode, or an equivalent native control
+- Settings persistence: a local file in `%AppData%` or the registry, for a few preferences
+- Autostart: primary support via Startup Task if the app will be packaged, otherwise the `Run` registry key for a classic install
+- Process enumeration: native Windows APIs
+- Total memory read: `GlobalMemoryStatusEx`
+- Per-process memory read: `GetProcessMemoryInfo` or equivalent native APIs
 
-### Perché questa scelta
-- Nessun runtime web
-- Minimo overhead grafico
-- Integrazione naturale con tray, finestre e menu Windows
-- Controllo fine sul ciclo di vita del processo e sulla quantità di polling
+### Why this choice
+- No web runtime
+- Minimal graphic overhead
+- Natural integration with Windows tray, windows and menus
+- Fine control over the process lifecycle and the amount of polling
 
-## Architettura generale
-L'app va separata in 5 blocchi principali.
+## General architecture
+The app is split into 5 main blocks.
 
 ### 1. Core system monitor
-Responsabile di:
-- leggere RAM totale usata
-- enumerare i processi attivi
-- leggere memoria per singolo processo
-- calcolare le percentuali e formattare i dati per la UI
-- mantenere il polling al minimo indispensabile
+Responsible for:
+- reading total RAM used
+- enumerating active processes
+- reading memory per single process
+- computing percentages and formatting data for the UI
+- keeping polling at the bare minimum
 
-### 2. UI principale
-Responsabile di:
-- mostrare la tabella dei processi
-- mostrare search box
-- mostrare ordinamento per nome o RAM
-- mostrare impostazioni basilari
-- reagire agli eventi di refresh del monitor
+### 2. Main UI
+Responsible for:
+- showing the process table
+- showing the search box
+- showing sorting by name or RAM
+- showing basic settings
+- reacting to monitor refresh events
 
 ### 3. Tray controller
-Responsabile di:
-- creare l'icona tray
-- aggiornare il testo/label con la RAM totale
-- gestire doppio click e menu contestuale
-- mantenere la presenza dell'app quando la finestra è nascosta
+Responsible for:
+- creating the tray icon
+- updating the text/label with the total RAM
+- handling double-click and the context menu
+- keeping the app alive while the window is hidden
 
 ### 4. Settings store
-Responsabile di:
-- salvare e caricare le preferenze
-- gestire avvio automatico
-- gestire background mode
-- gestire intervallo di refresh
+Responsible for:
+- saving and loading preferences
+- managing automatic startup
+- managing background mode
+- managing the refresh interval
 
 ### 5. Lifecycle manager
-Responsabile di:
-- decidere quando mostrare/nascondere la finestra
-- intercettare close/minimize e trasformarli in hide-to-tray
-- uscire solo su comando esplicito dal menu tray
+Responsible for:
+- deciding when to show/hide the window
+- intercepting close/minimize and turning them into hide-to-tray
+- quitting only on an explicit command from the tray menu
 
-## Modello dati minimo
-Definire strutture dati semplici e stabili.
+## Minimal data model
+Define simple and stable data structures.
 
 ### ProcessInfo
-Campi suggeriti:
+Suggested fields:
 - pid
-- nome processo
-- memoria usata in byte
-- memoria usata in MB o MiB per visualizzazione
-- percentuale opzionale rispetto al totale RAM, se utile alla UI
+- process name
+- memory used in bytes
+- memory used in MB or MiB for display
+- optional percentage relative to total RAM, if useful for the UI
 
 ### AppSettings
-Campi suggeriti:
+Suggested fields:
 - start_on_windows: bool
 - start_in_background: bool
 - refresh_interval_seconds: u64
@@ -104,162 +106,167 @@ Campi suggeriti:
 - show_tray_tooltip: bool
 
 ### SortState
-Campi suggeriti:
+Suggested fields:
 - sort_column: Name | Memory
 - sort_direction: Asc | Desc
 
-## Windows API da usare
-Le API devono restare native e leggere.
+## Windows APIs to use
+The APIs must stay native and light.
 
-### Finestra e messaggi
+### Window and messages
 - `RegisterClassExW`
 - `CreateWindowExW`
 - `ShowWindow`
 - `UpdateWindow`
-- message loop classico con `GetMessageW` / `TranslateMessage` / `DispatchMessageW`
+- classic message loop with `GetMessageW` / `TranslateMessage` / `DispatchMessageW`
 
 ### Tray icon
 - `Shell_NotifyIconW`
 - `NOTIFYICONDATAW`
-- messaggi custom per click singolo, doppio click e menu contestuale
+- custom messages for single click, double click and context menu
 
-### Menu contestuale tray
+### Tray context menu
 - `CreatePopupMenu`
 - `AppendMenuW`
 - `TrackPopupMenu`
 
-### Gestione memoria e processi
-- `GlobalMemoryStatusEx` per RAM totale
-- `CreateToolhelp32Snapshot` + `Process32FirstW` / `Process32NextW` per enumerazione processi, se basta
-- `OpenProcess` + `GetProcessMemoryInfo` per memoria per processo
-- chiusura immediata degli handle dopo l'uso
+### Memory and process management
+- `GlobalMemoryStatusEx` for total RAM
+- `CreateToolhelp32Snapshot` + `Process32FirstW` / `Process32NextW` for process enumeration, if that is enough
+- `OpenProcess` + `GetProcessMemoryInfo` for per-process memory
+- closing handles immediately after use
 
 ### Autostart
-Due strategie possibili:
-- App installata classica: scrivere una voce in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-- App pacchettizzata: valutare `StartupTask` e integrazione con packaging Windows, se il progetto evolverà verso MSIX
+Two possible strategies:
+- Classic installed app: write an entry in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- Packaged app: evaluate `StartupTask` and integration with Windows packaging, if the project evolves toward MSIX
 
-Per una prima versione semplice e robusta, usare `Run` nel registry ma incapsulare la logica dietro un modulo dedicato, così sarà facile sostituirla con Startup Task in futuro.
+For a simple and robust first version, use the registry `Run` key but encapsulate the logic behind a dedicated module, so it is easy to replace it with Startup Task in the future.
 
-## Comportamento richiesto
+## Required behavior
 
-### All'avvio
-1. Caricare le impostazioni.
-2. Creare la finestra principale ma non mostrarla se `start_in_background` è attivo.
-3. Creare il tray icon.
-4. Avviare il primo refresh dati.
-5. Attivare il timer di polling con l'intervallo configurato.
+### At startup
+1. Load the settings.
+2. Create the main window but do not show it if `start_in_background` is active.
+3. Create the tray icon.
+4. Run the first data refresh.
+5. Start the polling timer with the configured interval.
 
-### Alla chiusura della finestra
-1. Intercettare il close event.
-2. Impedire la terminazione del processo.
-3. Nascondere la finestra.
-4. Lasciare vivo il tray icon.
+### On window close
+1. Intercept the close event.
+2. Prevent process termination.
+3. Hide the window.
+4. Keep the tray icon alive.
 
-### Alla minimizzazione
-1. Intercettare minimize.
-2. Nascondere la finestra.
-3. Ridurre la presenza visiva al solo tray icon.
+### On minimization
+1. Intercept minimize.
+2. Hide the window.
+3. Reduce the visual presence to the tray icon only.
 
-### Doppio click sul tray icon
-1. Riportare la finestra principale in primo piano.
-2. Ripristinare la finestra se era minimizzata o nascosta.
-3. Portare il focus sulla search box o sulla lista, secondo UX scelta.
+### Double-click on the tray icon
+1. Bring the main window to the foreground.
+2. Restore the window if it was minimized or hidden.
+3. Move focus to the search box or the list, according to the chosen UX.
 
-### Click destro sul tray icon
-1. Mostrare menu contestuale.
-2. Offrire almeno due azioni: apri finestra, esci.
-3. Selezionare esci solo dopo conferma implicita dall'azione dell'utente.
+### Right-click on the tray icon
+1. Show the context menu.
+2. Offer at least two actions: open window, quit.
+3. Quit only after the implicit confirmation from the user's action.
 
-## Interfaccia principale
-La finestra principale dovrebbe essere composta da 3 aree.
+## Main interface
+The main window should be composed of 3 areas.
 
 ### Header
-- valore RAM totale usata in grande evidenza
-- eventuale indicatore di refresh in corso, molto leggero
-- pulsante impostazioni
+- total RAM used value in large, prominent display
+- optional in-progress refresh indicator, very light
+- settings button
 
-### Area filtri
-- search box per filtrare i processi in case-insensitive match
-- controlli di sorting
-- opzionale: refresh manuale
+### Filters area
+- search box to filter processes with case-insensitive match
+- sorting controls
+- optional: manual refresh
 
-### Tabella processi
-Colonne suggerite:
-- nome processo
+### Process table
+Suggested columns:
+- process name
 - pid
-- RAM usata
-- percentuale sul totale, se utile
-- eventuale percorso eseguibile se recuperabile senza impatto eccessivo
+- RAM used
+- percentage of the total, if useful
+- optional executable path if retrievable without excessive impact
 
-Per minimizzare le risorse, usare una tabella virtualizzata o comunque controlli nativi efficienti, evitando di ricreare tutte le righe ad ogni refresh se i dati non cambiano.
+To minimize resources, use a virtualized table or, in any case, efficient
+native controls, avoiding recreating all the rows on every refresh when the
+data did not change.
 
-## Ricerca e ordinamento
+## Search and sorting
 
-### Ricerca
-- normalizzare sia query che nome processo in lowercase
-- usare match case-insensitive tipo contains
-- applicare il filtro solo lato UI, senza rifare l'enumerazione se non necessario
+### Search
+- normalize both query and process name to lowercase
+- use case-insensitive contains-style matching
+- apply the filter only on the UI side, without re-running the enumeration if not necessary
 
-### Ordinamento
-- ordinamento stabile
-- per nome: confronto case-insensitive
-- per RAM: confronto numerico
-- supportare toggle ASC/DESC
-- preservare l'ordine consistente quando i valori sono uguali
+### Sorting
+- stable sorting
+- by name: case-insensitive comparison
+- by RAM: numeric comparison
+- support ASC/DESC toggle
+- preserve a consistent order when values are equal
 
-## Strategia di refresh a basso consumo
-Questa è una parte critica.
+## Low-consumption refresh strategy
+This is a critical part.
 
-### Principi
-- evitare polling troppo frequente
-- usare timer Windows nativi, non loop attivi
-- aggiornare la UI solo quando ci sono dati nuovi
-- separare refresh totale RAM e refresh lista processi se serve in futuro
+### Principles
+- avoid overly frequent polling
+- use native Windows timers, not active loops
+- update the UI only when there is new data
+- separate total RAM refresh and process list refresh if needed in the future
 
-### Raccomandazione iniziale
-- refresh RAM totale: ogni N secondi configurabili
-- refresh processi: stesso intervallo nella prima versione
-- se il numero di processi è alto, valutare caching e diff incrementali
+### Initial recommendation
+- total RAM refresh: every N configurable seconds
+- process refresh: same interval in the first version
+- if the process count is high, evaluate caching and incremental diffs
 
-### Ottimizzazioni
-- riusare buffer dove possibile
-- chiudere subito gli handle dei processi
-- evitare conversioni stringa ripetute
-- evitare logging verboso in produzione
+### Optimizations
+- reuse buffers where possible
+- close process handles immediately
+- avoid repeated string conversions
+- avoid verbose logging in production
 
-## Persistenza impostazioni
-Le impostazioni devono essere memorizzate localmente in modo semplice e affidabile.
+## Settings persistence
+Settings must be stored locally in a simple and reliable way.
 
-### Opzione consigliata
-- file JSON o TOML in `%AppData%\ActivityTracker\settings.json`
+### Recommended option
+- a JSON or TOML file in `%AppData%\ActivityTracker\settings.json`
 
-### Motivi
-- facile da debuggare
-- non richiede amministratore
-- isolato per utente
-- semplice migrazione futura
+### Reasons
+- easy to debug
+- does not require administrator
+- isolated per user
+- simple future migration
 
-### Alternative
-- registry per impostazioni minime
-- file binario solo se serve un formato più compatto, ma non è necessario
+### Alternatives
+- registry for minimal settings
+- binary file only if a more compact format is needed, but it is not necessary
 
-## Autostart best practice su Windows
-Per la prima versione, evitare scorciatoie nel Startup folder come soluzione primaria.
+## Windows autostart best practices
+For the first version, avoid Startup folder shortcuts as the primary solution.
 
-### Approccio consigliato
-- usare una preferenza esplicita dell'utente in Impostazioni
-- su abilitazione, registrare l'app in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-- su disabilitazione, rimuovere la voce
-- scrivere solo in ambito utente corrente
-- non richiedere privilegi elevati
-- mantenere il comportamento reversibile e trasparente
+### Recommended approach
+- use an explicit user preference in Settings
+- on enable, register the app in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- on disable, remove the entry
+- write only in the current user scope
+- do not require elevated privileges
+- keep the behavior reversible and transparent
 
-### Nota importante
-Se il progetto in futuro sarà distribuito come app MSIX, conviene migrare il meccanismo a Startup Task per integrarsi meglio con l'ecosistema Windows moderno. Il codice deve quindi isolare la logica in un modulo dedicato, non sparsa nella UI.
+### Important note
+If the project will be distributed in the future as an MSIX app, it is worth
+migrating the mechanism to Startup Task to integrate better with the modern
+Windows ecosystem. The code must therefore isolate the logic in a dedicated
+module, not scattered in the UI.
 
-## Struttura consigliata del progetto
-Una possibile organizzazione del codice:
+## Suggested project structure
+A possible code organization:
 
 - `src/main.rs`
 - `src/app.rs`
@@ -277,135 +284,137 @@ Una possibile organizzazione del codice:
 - `src/runtime.rs`
 - `src/error.rs`
 
-### Obiettivo di questa separazione
-- tenere separate responsabilità UI, monitor e persistenza
-- ridurre l'accoppiamento
-- rendere testabili le funzioni di parsing, sorting e filtering
-- semplificare il lavoro di un LLM che genera il codice
+### Goal of this separation
+- keep UI, monitor and persistence responsibilities separate
+- reduce coupling
+- make parsing, sorting and filtering functions testable
+- simplify the work of an LLM generating the code
 
-## Librerie Rust consigliate
-Usare il minimo indispensabile.
+## Recommended Rust libraries
+Use the minimum necessary.
 
-### Possibili crate utili
-- `windows` o `windows-sys` per le API Win32
-- `serde` e `serde_json` per settings
-- `tracing` o logging minimo solo in debug
-- eventualmente `thiserror` per errori applicativi
+### Possibly useful crates
+- `windows` or `windows-sys` for the Win32 APIs
+- `serde` and `serde_json` for settings
+- `tracing` or minimal logging, only in debug
+- optionally `thiserror` for application errors
 
-### Evitare
-- framework GUI pesanti
-- motori web embedded
-- dipendenze che portano runtime significativi se non necessarie
+### Avoid
+- heavy GUI frameworks
+- embedded web engines
+- dependencies that bring significant runtimes when not needed
 
-## Dettaglio dei passi di implementazione
+## Implementation step details
 
-### Fase 1 - bootstrap progetto
-1. Creare un progetto Cargo Rust binario.
-2. Configurare il target Windows x86_64.
-3. Aggiungere dipendenze minime per Win32 API e serializzazione.
-4. Verificare build base su Windows.
+### Phase 1 - project bootstrap
+1. Create a Cargo Rust binary project.
+2. Configure the Windows x86_64 target.
+3. Add minimal dependencies for Win32 APIs and serialization.
+4. Verify a base build on Windows.
 
-### Fase 2 - runtime app e ciclo di vita
-1. Implementare il punto di ingresso dell'app.
-2. Creare una struttura `AppState` centralizzata.
-3. Creare il message loop Windows nativo.
-4. Gestire la finestra principale e il tray icon.
-5. Intercettare close/minimize per nascondere la finestra.
+### Phase 2 - app runtime and lifecycle
+1. Implement the app entry point.
+2. Create a centralized `AppState` structure.
+3. Create the native Windows message loop.
+4. Handle the main window and the tray icon.
+5. Intercept close/minimize to hide the window.
 
-### Fase 3 - monitor memoria totale
-1. Implementare lettura RAM totale con `GlobalMemoryStatusEx`.
-2. Convertire i byte in percentuale 0-100.
-3. Aggiornare il testo del tray icon con il valore numerico.
-4. Aggiornare il valore nella UI principale.
+### Phase 3 - total memory monitor
+1. Implement total RAM reading with `GlobalMemoryStatusEx`.
+2. Convert bytes to a 0-100 percentage.
+3. Update the tray icon text with the numeric value.
+4. Update the value in the main UI.
 
-### Fase 4 - monitor processi
-1. Enumerare i processi attivi con API native.
-2. Aprire ogni processo con permessi minimi necessari.
-3. Leggere la memoria per processo.
-4. Comporre una lista ordinata di `ProcessInfo`.
-5. Chiudere tutti gli handle dopo l'uso.
+### Phase 4 - process monitor
+1. Enumerate active processes with native APIs.
+2. Open each process with the minimum required permissions.
+3. Read per-process memory.
+4. Compose a sorted list of `ProcessInfo`.
+5. Close all handles after use.
 
-### Fase 5 - UI lista processi
-1. Creare la finestra principale con controlli nativi.
-2. Inserire search box e controlli sorting.
-3. Visualizzare la lista processi in una tabella efficiente.
-4. Aggiornare la vista solo quando cambiano i dati o il filtro.
-5. Evitare ridisegni completi inutili.
+### Phase 5 - process list UI
+1. Create the main window with native controls.
+2. Insert the search box and sorting controls.
+3. Display the process list in an efficient table.
+4. Update the view only when the data or the filter change.
+5. Avoid useless full redraws.
 
-### Fase 6 - search e sort
-1. Implementare filtro case-insensitive sui nomi processo.
-2. Implementare ordinamento per nome e RAM.
-3. Permettere toggle ASC/DESC.
-4. Garantire comportamento stabile e prevedibile.
+### Phase 6 - search and sort
+1. Implement case-insensitive filtering on process names.
+2. Implement sorting by name and RAM.
+3. Allow ASC/DESC toggle.
+4. Guarantee stable and predictable behavior.
 
-### Fase 7 - tray behavior
-1. Creare l'icona tray all'avvio.
-2. Mostrare il valore RAM nel tray, compatibilmente con le limitazioni del testo disponibile.
-3. Gestire doppio click per aprire la finestra principale.
-4. Gestire click destro con menu contestuale.
-5. Implementare uscita definitiva dal menu tray.
+### Phase 7 - tray behavior
+1. Create the tray icon at startup.
+2. Show the RAM value in the tray, within the available text limits.
+3. Handle double-click to open the main window.
+4. Handle right-click with the context menu.
+5. Implement the final quit from the tray menu.
 
-### Fase 8 - settings
-1. Salvare e caricare le impostazioni da file locale.
-2. Implementare toggle avvio automatico.
-3. Implementare toggle avvio in background.
-4. Implementare intervallo refresh configurabile in secondi.
-5. Validare i valori per evitare impostazioni non sensate.
+### Phase 8 - settings
+1. Save and load settings from a local file.
+2. Implement the automatic startup toggle.
+3. Implement the background startup toggle.
+4. Implement a configurable refresh interval in seconds.
+5. Validate values to avoid nonsensical settings.
 
-### Fase 9 - performance e robustness
-1. Misurare l'impatto di CPU e memoria.
-2. Ridurre allocazioni nella scansione processi.
-3. Usare timer e non busy loop.
-4. Gestire errori di permesso o processi terminati in modo silenzioso e stabile.
-5. Evitare crash su processi protetti o non accessibili.
+### Phase 9 - performance and robustness
+1. Measure the CPU and memory impact.
+2. Reduce allocations in the process scan.
+3. Use timers, not busy loops.
+4. Handle permission errors or terminated processes silently and stably.
+5. Avoid crashes on protected or inaccessible processes.
 
-### Fase 10 - testing
-1. Testare parsing, filtering e sorting con unit test puri.
-2. Testare la serializzazione delle impostazioni.
-3. Testare i comportamenti UI principali manualmente su Windows.
-4. Verificare tray icon, doppio click, menu contestuale e hide-to-tray.
-5. Verificare che l'app non lasci handle aperti.
+### Phase 10 - testing
+1. Test parsing, filtering and sorting with pure unit tests.
+2. Test settings serialization.
+3. Test the main UI behaviors manually on Windows.
+4. Verify tray icon, double click, context menu and hide-to-tray.
+5. Verify that the app leaves no open handles.
 
 ## Error handling
-L'app deve degradare bene in caso di errori.
+The app must degrade gracefully on errors.
 
-### Casi da gestire
-- processo terminato tra enumerazione e lettura memoria
-- accesso negato ad alcuni processi
-- tray icon non creato correttamente
-- file impostazioni mancante o corrotto
-- chiave registry non scrivibile per policy utente
+### Cases to handle
+- process terminated between enumeration and memory read
+- access denied to some processes
+- tray icon not created correctly
+- missing or corrupted settings file
+- registry key not writable due to user policy
 
-### Comportamento desiderato
-- non crashare
-- ignorare i processi non leggibili
-- mantenere la UI aggiornata per i processi restanti
-- notificare l'errore solo se serve davvero all'utente
+### Desired behavior
+- do not crash
+- ignore unreadable processes
+- keep the UI updated for the remaining processes
+- notify the error only if it really matters to the user
 
-## Distribuzione futura
-Se l'app sarà distribuita a utenti finali, considerare in ordine:
-1. build release ottimizzata
-2. firma del binario
-3. installer classico oppure MSIX
-4. integrazione corretta con startup e disinstallazione
-5. eventuale telemetria disattivata di default
+## Future distribution
+If the app will be distributed to end users, consider in order:
+1. optimized release build
+2. binary signing
+3. classic installer or MSIX
+4. correct integration with startup and uninstall
+5. optional telemetry, disabled by default
 
-## Scelte da fissare prima di scrivere codice
-Prima di implementare, un LLM o uno sviluppatore deve decidere esplicitamente:
-- usare `windows` o `windows-sys`
-- usare `ListView` virtuale o altra UI nativa equivalente
-- rappresentare la memoria per processo come working set, private bytes o entrambi
-- gestire l'autostart tramite `Run` o predisporre subito supporto MSIX
-- mostrare solo il numero percentuale nel tray oppure anche in tooltip
+## Choices to fix before writing code
+Before implementing, an LLM or a developer must explicitly decide:
+- use `windows` or `windows-sys`
+- use a virtual `ListView` or another equivalent native UI
+- represent per-process memory as working set, private bytes, or both
+- handle autostart via `Run` or immediately prepare MSIX support
+- show only the percentage number in the tray, or also a tooltip
 
-## Raccomandazione finale
-Per ottenere un tool davvero leggero e ben integrato con Windows, la versione iniziale dovrebbe essere:
-- Rust stabile
-- Win32 API native
-- tray icon con `Shell_NotifyIconW`
-- lista processi con controlli nativi Windows
-- settings su file locale
-- autostart per utente in `HKCU\...\Run`
-- refresh configurabile e basato su timer
+## Final recommendation
+To get a tool that is truly light and well integrated with Windows, the initial
+version should be:
+- stable Rust
+- native Win32 APIs
+- tray icon with `Shell_NotifyIconW`
+- process list with native Windows controls
+- settings on a local file
+- per-user autostart in `HKCU\...\Run`
+- configurable, timer-based refresh
 
-Questa combinazione massimizza compatibilità, minimizza consumo di risorse e rispetta tutti i vincoli richiesti.
+This combination maximizes compatibility, minimizes resource consumption and
+respects all the required constraints.
