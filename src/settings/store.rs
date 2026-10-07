@@ -8,8 +8,9 @@ const APP_DIR: &str = "ActivityTracker";
 const SETTINGS_FILE: &str = "settings.json";
 
 pub fn settings_path() -> AppResult<PathBuf> {
-    let appdata = std::env::var("APPDATA")
-        .map_err(|_| AppError::InvalidSetting("APPDATA environment variable is not set".to_string()))?;
+    let appdata = std::env::var("APPDATA").map_err(|_| {
+        AppError::InvalidSetting("APPDATA environment variable is not set".to_string())
+    })?;
     Ok(PathBuf::from(appdata).join(APP_DIR).join(SETTINGS_FILE))
 }
 

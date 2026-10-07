@@ -2,7 +2,10 @@
 
 use std::sync::Mutex;
 
-use activity_tracker_win_rs::model::{parse_refresh_interval_seconds, AppSettings};
+use activity_tracker_win_rs::model::{
+    AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_RAM_BG,
+    DEFAULT_TRAY_RAM_FG, parse_refresh_interval_seconds,
+};
 use activity_tracker_win_rs::settings::store::{load_settings, save_settings, settings_path};
 
 static APPDATA_LOCK: Mutex<()> = Mutex::new(());
@@ -23,6 +26,13 @@ fn settings_roundtrip_uses_appdata_location() {
         window_start_hidden: true,
         show_tray_tooltip: true,
         tray_icon_thermal_red: true,
+        tray_icon_ram_enabled: true,
+        tray_icon_cpu_enabled: true,
+        tray_icon_ram_bg: DEFAULT_TRAY_RAM_BG,
+        tray_icon_ram_fg: DEFAULT_TRAY_RAM_FG,
+        tray_icon_cpu_bg: DEFAULT_TRAY_CPU_BG,
+        tray_icon_cpu_fg: DEFAULT_TRAY_CPU_FG,
+        tray_icon_font_size: 0,
     };
 
     save_settings(&source).expect("save settings");

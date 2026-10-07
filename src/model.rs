@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::ui::tray::{TRAY_BG_COLOR, TRAY_TEXT_COLOR};
+
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub pid: u32,
@@ -57,9 +59,58 @@ pub struct AppSettings {
     pub refresh_interval_seconds: u64,
     pub window_start_hidden: bool,
     pub show_tray_tooltip: bool,
-    /// Turn the tray icon red while the CPU is thermal-throttling.
+    /// Turn the tray icons red while the CPU is thermal-throttling.
     #[serde(default)]
     pub tray_icon_thermal_red: bool,
+    /// Show the RAM percentage icon in the tray.
+    #[serde(default = "default_true")]
+    pub tray_icon_ram_enabled: bool,
+    /// Show the CPU average-temperature icon in the tray.
+    #[serde(default = "default_true")]
+    pub tray_icon_cpu_enabled: bool,
+    /// COLORREF (0x00BBGGRR) background of the RAM tray icon.
+    #[serde(default = "default_ram_bg")]
+    pub tray_icon_ram_bg: u32,
+    /// COLORREF (0x00BBGGRR) text color of the RAM tray icon.
+    #[serde(default = "default_ram_fg")]
+    pub tray_icon_ram_fg: u32,
+    /// COLORREF (0x00BBGGRR) background of the CPU tray icon.
+    #[serde(default = "default_cpu_bg")]
+    pub tray_icon_cpu_bg: u32,
+    /// COLORREF (0x00BBGGRR) text color of the CPU tray icon.
+    #[serde(default = "default_cpu_fg")]
+    pub tray_icon_cpu_fg: u32,
+    /// Font height in pixels for the tray icons' text. 0 = automatic
+    /// (the text is sized to fit the icon).
+    #[serde(default)]
+    pub tray_icon_font_size: u32,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+// Default tray icon colors: dark gray background, white text. The CPU icon
+// starts with the same look; both are customizable in the settings window.
+pub const DEFAULT_TRAY_RAM_BG: u32 = TRAY_BG_COLOR;
+pub const DEFAULT_TRAY_RAM_FG: u32 = TRAY_TEXT_COLOR;
+pub const DEFAULT_TRAY_CPU_BG: u32 = TRAY_BG_COLOR;
+pub const DEFAULT_TRAY_CPU_FG: u32 = TRAY_TEXT_COLOR;
+
+/// Tray icon text font size: 0 = automatic (fit to the icon).
+pub const DEFAULT_TRAY_ICON_FONT_SIZE: u32 = 0;
+
+fn default_ram_bg() -> u32 {
+    DEFAULT_TRAY_RAM_BG
+}
+fn default_ram_fg() -> u32 {
+    DEFAULT_TRAY_RAM_FG
+}
+fn default_cpu_bg() -> u32 {
+    DEFAULT_TRAY_CPU_BG
+}
+fn default_cpu_fg() -> u32 {
+    DEFAULT_TRAY_CPU_FG
 }
 
 impl Default for AppSettings {
@@ -71,6 +122,13 @@ impl Default for AppSettings {
             window_start_hidden: false,
             show_tray_tooltip: true,
             tray_icon_thermal_red: false,
+            tray_icon_ram_enabled: true,
+            tray_icon_cpu_enabled: true,
+            tray_icon_ram_bg: DEFAULT_TRAY_RAM_BG,
+            tray_icon_ram_fg: DEFAULT_TRAY_RAM_FG,
+            tray_icon_cpu_bg: DEFAULT_TRAY_CPU_BG,
+            tray_icon_cpu_fg: DEFAULT_TRAY_CPU_FG,
+            tray_icon_font_size: DEFAULT_TRAY_ICON_FONT_SIZE,
         }
     }
 }
@@ -78,6 +136,7 @@ impl Default for AppSettings {
 impl AppSettings {
     pub fn normalized(mut self) -> Self {
         self.refresh_interval_seconds = self.refresh_interval_seconds.clamp(1, 60);
+        self.tray_icon_font_size = self.tray_icon_font_size.clamp(0, 32);
         self
     }
 }
@@ -91,7 +150,7 @@ pub fn parse_refresh_interval_seconds(input: &str, fallback: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_refresh_interval_seconds, AppSettings};
+    use super::{AppSettings, parse_refresh_interval_seconds};
 
     #[test]
     fn normalize_interval_bounds() {

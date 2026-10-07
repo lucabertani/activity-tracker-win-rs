@@ -4,36 +4,37 @@ use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{CreateSolidBrush, HBRUSH};
 use windows_sys::Win32::UI::Controls::{
     ICC_LISTVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, LVCF_FMT, LVCF_TEXT,
-    LVCF_WIDTH, LVCFMT_LEFT, LVCOLUMNW, LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES,
-    LVS_OWNERDATA, LVS_REPORT, LVS_SHOWSELALWAYS, WC_LISTVIEWW,
+    LVCF_WIDTH, LVCFMT_LEFT, LVCOLUMNW, LVIF_STATE, LVIS_FOCUSED, LVIS_SELECTED, LVITEMW,
+    LVM_GETNEXTITEM, LVM_SETITEMSTATE, LVNI_SELECTED, LVS_EX_FULLROWSELECT, LVS_EX_GRIDLINES,
+    LVS_OWNERDATA, LVS_REPORT, LVS_SHOWSELALWAYS, LVSICF_NOSCROLL, WC_LISTVIEWW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_PUSHBUTTON, CS_HREDRAW, CS_VREDRAW,
-    CW_USEDEFAULT, CreateWindowExW, ES_AUTOHSCROLL, GetWindowTextLengthW, GetWindowTextW, HMENU,
-    HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW, LoadCursorW, RegisterClassW, SW_HIDE, SW_RESTORE,
-    SW_SHOW, SWP_NOMOVE, SWP_NOSIZE, SendMessageW, SetForegroundWindow, SetWindowPos,
-    SetWindowTextW, ShowWindow, WNDCLASSW, WS_BORDER, WS_CHILD, WS_CLIPSIBLINGS,
-    WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    BM_GETCHECK, BM_SETCHECK, BS_PUSHBUTTON, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
+    CreateWindowExW, ES_AUTOHSCROLL, GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_NOTOPMOST,
+    HWND_TOPMOST, IDC_ARROW, LoadCursorW, RegisterClassW, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOMOVE,
+    SWP_NOSIZE, SendMessageW, SetForegroundWindow, SetWindowPos, SetWindowTextW, ShowWindow,
+    WNDCLASSW, WS_BORDER, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW,
+    WS_TABSTOP, WS_VISIBLE,
 };
 
 pub const IDC_HEADER_RAM: i32 = 2001;
+pub const IDC_HEADER_CPU_TEMP: i32 = 2013;
 pub const IDC_HEADER_CPU_THROTTLE: i32 = 2011;
-pub const IDC_TRAY_THERMAL_RED: i32 = 2012;
+pub const IDC_SETTINGS_BUTTON: i32 = 2014;
 pub const IDC_SEARCH: i32 = 2002;
 pub const IDC_SORT_NAME: i32 = 2003;
 pub const IDC_SORT_MEMORY: i32 = 2004;
 pub const IDC_PROCESS_LIST: i32 = 2005;
-pub const IDC_START_ON_WINDOWS: i32 = 2006;
-pub const IDC_START_IN_BACKGROUND: i32 = 2007;
-pub const IDC_INTERVAL_EDIT: i32 = 2008;
-pub const IDC_APPLY_SETTINGS: i32 = 2009;
 pub const IDC_TERMINATE_PROCESS: i32 = 2010;
 // COLORREF format is 0x00BBGGRR.
 pub const APP_WINDOW_BG_COLOR: u32 = 0x00F0F0F0; // #f0f0f0
 
 pub const MAIN_CLASS: &str = "ActivityTrackerMainWindow";
 
-pub fn register_main_window_class(hinstance: HINSTANCE, wndproc: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT) -> bool {
+pub fn register_main_window_class(
+    hinstance: HINSTANCE,
+    wndproc: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT,
+) -> bool {
     let class_name = wide(MAIN_CLASS);
     let wc = WNDCLASSW {
         style: CS_HREDRAW | CS_VREDRAW,
@@ -75,16 +76,55 @@ pub fn create_main_window(hinstance: HINSTANCE, lp_param: isize) -> HWND {
 
 pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
     unsafe {
-        let mut icc = INITCOMMONCONTROLSEX {
+        let icc = INITCOMMONCONTROLSEX {
             dwSize: mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
             dwICC: ICC_LISTVIEW_CLASSES,
         };
-        let _ = InitCommonControlsEx(&mut icc);
+        let _ = InitCommonControlsEx(&icc);
 
-        create_label(hwnd, hinstance, "RAM totale usata: 0", 20, 20, 350, 20, IDC_HEADER_RAM);
+        create_label(
+            hwnd,
+            hinstance,
+            "Total RAM used: 0%",
+            20,
+            20,
+            350,
+            20,
+            IDC_HEADER_RAM,
+        );
+        // Average per-core temperature; "n/a" while the WinRing0 driver is missing.
+        create_label(
+            hwnd,
+            hinstance,
+            "CPU avg: n/a",
+            390,
+            20,
+            220,
+            20,
+            IDC_HEADER_CPU_TEMP,
+        );
         // Shown (in red) only while the CPU is thermal-throttling.
-        create_label(hwnd, hinstance, "", 20, 40, 360, 16, IDC_HEADER_CPU_THROTTLE);
-        create_label(hwnd, hinstance, "Ricerca processi:", 20, 60, 140, 22, 0);
+        create_label(
+            hwnd,
+            hinstance,
+            "",
+            20,
+            40,
+            360,
+            16,
+            IDC_HEADER_CPU_THROTTLE,
+        );
+        create_button(
+            hwnd,
+            hinstance,
+            "Settings",
+            840,
+            16,
+            110,
+            26,
+            IDC_SETTINGS_BUTTON,
+        );
+        create_label(hwnd, hinstance, "Search processes:", 20, 60, 140, 22, 0);
 
         let _ = CreateWindowExW(
             WS_EX_CLIENTEDGE,
@@ -101,12 +141,30 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
             std::ptr::null(),
         );
 
-        create_button(hwnd, hinstance, "Sort Nome", 440, 58, 100, 24, IDC_SORT_NAME);
-        create_button(hwnd, hinstance, "Sort RAM", 550, 58, 100, 24, IDC_SORT_MEMORY);
         create_button(
             hwnd,
             hinstance,
-            "Termina processo",
+            "Sort Name",
+            440,
+            58,
+            100,
+            24,
+            IDC_SORT_NAME,
+        );
+        create_button(
+            hwnd,
+            hinstance,
+            "Sort RAM",
+            550,
+            58,
+            100,
+            24,
+            IDC_SORT_MEMORY,
+        );
+        create_button(
+            hwnd,
+            hinstance,
+            "Terminate process",
             665,
             58,
             140,
@@ -122,13 +180,13 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
                 | WS_VISIBLE
                 | WS_BORDER
                 | WS_CLIPSIBLINGS
-                | (LVS_REPORT as u32)
-                | (LVS_SHOWSELALWAYS as u32)
-                | (LVS_OWNERDATA as u32),
+                | LVS_REPORT
+                | LVS_SHOWSELALWAYS
+                | LVS_OWNERDATA,
             20,
             95,
             940,
-            420,
+            545,
             hwnd,
             menu_id(IDC_PROCESS_LIST),
             hinstance,
@@ -143,76 +201,21 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
         );
 
         add_listview_columns(list);
-
-        create_label(hwnd, hinstance, "Impostazioni", 20, 535, 130, 24, 0);
-
-        let _ = CreateWindowExW(
-            0,
-            wide("BUTTON").as_ptr(),
-            wide("Avvio automatico con Windows").as_ptr(),
-            WS_CHILD | WS_VISIBLE | (BS_AUTOCHECKBOX as u32),
-            20,
-            565,
-            260,
-            24,
-            hwnd,
-            menu_id(IDC_START_ON_WINDOWS),
-            hinstance,
-            std::ptr::null(),
-        );
-
-        let _ = CreateWindowExW(
-            0,
-            wide("BUTTON").as_ptr(),
-            wide("Avvio in background").as_ptr(),
-            WS_CHILD | WS_VISIBLE | (BS_AUTOCHECKBOX as u32),
-            290,
-            565,
-            180,
-            24,
-            hwnd,
-            menu_id(IDC_START_IN_BACKGROUND),
-            hinstance,
-            std::ptr::null(),
-        );
-
-        let _ = CreateWindowExW(
-            0,
-            wide("BUTTON").as_ptr(),
-            wide("Thermal throttling su task icon").as_ptr(),
-            WS_CHILD | WS_VISIBLE | (BS_AUTOCHECKBOX as u32),
-            20,
-            595,
-            300,
-            24,
-            hwnd,
-            menu_id(IDC_TRAY_THERMAL_RED),
-            hinstance,
-            std::ptr::null(),
-        );
-
-        create_label(hwnd, hinstance, "Refresh RAM (s):", 490, 567, 110, 20, 0);
-
-        let _ = CreateWindowExW(
-            WS_EX_CLIENTEDGE,
-            wide("EDIT").as_ptr(),
-            wide("3").as_ptr(),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | (ES_AUTOHSCROLL as u32),
-            605,
-            564,
-            80,
-            24,
-            hwnd,
-            menu_id(IDC_INTERVAL_EDIT),
-            hinstance,
-            std::ptr::null(),
-        );
-
-        create_button(hwnd, hinstance, "Applica", 700, 563, 100, 26, IDC_APPLY_SETTINGS);
     }
 }
 
-fn create_label(hwnd: HWND, hinstance: HINSTANCE, text: &str, x: i32, y: i32, w: i32, h: i32, id: i32) {
+// Mirrors the 8-argument Win32 CreateWindowExW call underneath.
+#[allow(clippy::too_many_arguments)]
+fn create_label(
+    hwnd: HWND,
+    hinstance: HINSTANCE,
+    text: &str,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    id: i32,
+) {
     unsafe {
         let _ = CreateWindowExW(
             0,
@@ -231,7 +234,18 @@ fn create_label(hwnd: HWND, hinstance: HINSTANCE, text: &str, x: i32, y: i32, w:
     }
 }
 
-fn create_button(hwnd: HWND, hinstance: HINSTANCE, text: &str, x: i32, y: i32, w: i32, h: i32, id: i32) {
+// Mirrors the 8-argument Win32 CreateWindowExW call underneath.
+#[allow(clippy::too_many_arguments)]
+fn create_button(
+    hwnd: HWND,
+    hinstance: HINSTANCE,
+    text: &str,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    id: i32,
+) {
     unsafe {
         let _ = CreateWindowExW(
             0,
@@ -252,7 +266,7 @@ fn create_button(hwnd: HWND, hinstance: HINSTANCE, text: &str, x: i32, y: i32, w
 
 fn add_listview_columns(list: HWND) {
     let columns = [
-        ("Processo", 260),
+        ("Process", 260),
         ("PID", 100),
         ("RAM MiB", 140),
         ("RAM %", 140),
@@ -310,12 +324,7 @@ pub fn set_checkbox(hwnd: HWND, id: i32, checked: bool) {
     unsafe {
         let control = windows_sys::Win32::UI::WindowsAndMessaging::GetDlgItem(hwnd, id);
         if !control.is_null() {
-            let _ = SendMessageW(
-                control,
-                BM_SETCHECK,
-                if checked { 1 } else { 0 },
-                0,
-            );
+            let _ = SendMessageW(control, BM_SETCHECK, if checked { 1 } else { 0 }, 0);
         }
     }
 }
@@ -331,22 +340,6 @@ pub fn is_checkbox_checked(hwnd: HWND, id: i32) -> bool {
     }
 }
 
-pub fn update_process_list(hwnd: HWND, rows: &[(String, String, String, String)]) {
-    unsafe {
-        let list = windows_sys::Win32::UI::WindowsAndMessaging::GetDlgItem(hwnd, IDC_PROCESS_LIST);
-        if list.is_null() {
-            return;
-        }
-
-        let _ = SendMessageW(
-            list,
-            windows_sys::Win32::UI::Controls::LVM_SETITEMCOUNT,
-            rows.len(),
-            0,
-        );
-    }
-}
-
 pub fn set_virtual_item_count(hwnd: HWND, count: usize) {
     unsafe {
         let list = windows_sys::Win32::UI::WindowsAndMessaging::GetDlgItem(hwnd, IDC_PROCESS_LIST);
@@ -354,12 +347,34 @@ pub fn set_virtual_item_count(hwnd: HWND, count: usize) {
             return;
         }
 
+        let selected =
+            SendMessageW(list, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize) as i32;
+
+        // LVSICF_NOSCROLL is what keeps the viewport where the user left it:
+        // a bare LVM_SETITEMCOUNT scrolls the list back to the top whenever
+        // the count changes (verified in examples/scroll_diag.rs).
         let _ = SendMessageW(
             list,
             windows_sys::Win32::UI::Controls::LVM_SETITEMCOUNT,
             count,
-            0,
+            LVSICF_NOSCROLL as isize,
         );
+
+        // LVM_SETITEMCOUNT clears the selection, so put it back.
+        if selected >= 0 && (selected as usize) < count {
+            let mut item = LVITEMW {
+                mask: LVIF_STATE,
+                state: LVIS_SELECTED | LVIS_FOCUSED,
+                stateMask: LVIF_STATE,
+                ..Default::default()
+            };
+            let _ = SendMessageW(
+                list,
+                LVM_SETITEMSTATE,
+                selected as usize,
+                &mut item as *mut _ as isize,
+            );
+        }
     }
 }
 
@@ -377,11 +392,7 @@ pub fn selected_process_row(hwnd: HWND) -> Option<i32> {
             windows_sys::Win32::UI::Controls::LVNI_SELECTED as isize,
         ) as i32;
 
-        if idx < 0 {
-            None
-        } else {
-            Some(idx)
-        }
+        if idx < 0 { None } else { Some(idx) }
     }
 }
 

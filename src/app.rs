@@ -4,53 +4,57 @@ use std::mem;
 
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    CreateSolidBrush, DeleteObject, SetBkMode, SetTextColor, TRANSPARENT, HBRUSH, HDC,
+    CreateSolidBrush, DeleteObject, HBRUSH, HDC, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::{LVIF_TEXT, LVN_GETDISPINFOW, NMLVDISPINFOW};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, CREATESTRUCTW, DefWindowProcW, DestroyWindow, DispatchMessageW, EN_CHANGE,
-    GWLP_USERDATA, GetCursorPos, GetDlgCtrlID, GetMessageW, KillTimer, MB_ICONERROR, MB_OK,
-    MSG, MessageBoxW, PostQuitMessage, SetTimer, SetWindowLongPtrW, TranslateMessage, WM_CLOSE,
+    GWLP_USERDATA, GetCursorPos, GetDlgCtrlID, GetMessageW, KillTimer, MB_ICONERROR, MB_OK, MSG,
+    MessageBoxW, PostQuitMessage, SetTimer, SetWindowLongPtrW, TranslateMessage, WM_CLOSE,
     WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NOTIFY,
     WM_RBUTTONUP, WM_SIZE, WM_TIMER,
 };
 
 use crate::error::{AppError, AppResult};
-use crate::model::{parse_refresh_interval_seconds, AppSettings, ProcessInfo, SortColumn, SortState};
+use crate::model::{AppSettings, ProcessInfo, SortColumn, SortState};
 use crate::monitor::cpu::CpuThrottleMonitor;
 use crate::monitor::memory::total_memory_status;
 use crate::monitor::processes::{apply_filter_and_sort, snapshot_processes, terminate_process};
-use crate::settings::autostart::set_autostart;
-use crate::settings::store::{load_settings, save_settings};
+use crate::settings::store::load_settings;
 use crate::ui::menu::{CMD_EXIT_APP, CMD_OPEN_WINDOW, show_tray_context_menu};
+use crate::ui::settings_window::{open_settings, register_settings_window_class};
 use crate::ui::tray::{
-    WM_TRAYICON, add_tray_icon, build_percentage_icon, destroy_icon, remove_tray_icon,
-    update_tray_icon, update_tray_tooltip,
+    TRAY_UID_CPU, TRAY_UID_FALLBACK, TRAY_UID_RAM, WM_TRAYICON, add_tray_icon, build_cpu_icon,
+    build_fallback_icon, build_ram_icon, destroy_icon, remove_tray_icon, update_tray_icon,
+    update_tray_tooltip,
 };
 use crate::ui::window::{
-    IDC_APPLY_SETTINGS, IDC_HEADER_CPU_THROTTLE, IDC_HEADER_RAM, IDC_INTERVAL_EDIT, IDC_SEARCH,
-    IDC_SORT_MEMORY, IDC_PROCESS_LIST, IDC_SORT_NAME, IDC_START_IN_BACKGROUND,
-    IDC_START_ON_WINDOWS, IDC_TERMINATE_PROCESS, IDC_TRAY_THERMAL_RED,
-    create_controls,
-    create_main_window, get_control_text, hide_main_window, is_checkbox_checked,
-    register_main_window_class, selected_process_row, set_checkbox, set_label_text,
-    set_virtual_item_count, show_main_window,
-    wide,
+    IDC_HEADER_CPU_TEMP, IDC_HEADER_CPU_THROTTLE, IDC_HEADER_RAM, IDC_PROCESS_LIST, IDC_SEARCH,
+    IDC_SETTINGS_BUTTON, IDC_SORT_MEMORY, IDC_SORT_NAME, IDC_TERMINATE_PROCESS, create_controls,
+    create_main_window, get_control_text, hide_main_window, register_main_window_class,
+    selected_process_row, set_label_text, set_virtual_item_count, show_main_window, wide,
 };
 
 const TIMER_REFRESH_ID: usize = 1;
 
-struct AppState {
-    settings: AppSettings,
+#[allow(clippy::upper_case_acronyms)]
+type HICON = windows_sys::Win32::UI::WindowsAndMessaging::HICON;
+
+pub(crate) struct AppState {
+    pub(crate) settings: AppSettings,
     sort: SortState,
     search_query: String,
     all_processes: Vec<ProcessInfo>,
     visible_processes: Vec<ProcessInfo>,
-    current_ram_percent: u32,
-    cpu_monitor: CpuThrottleMonitor,
+    pub(crate) current_ram_percent: u32,
+    pub(crate) cpu_monitor: CpuThrottleMonitor,
+    cpu_throttling: bool,
     window_bg_brush: HBRUSH,
-    tray_icon: windows_sys::Win32::UI::WindowsAndMessaging::HICON,
+    tray_icon_ram: HICON,
+    tray_icon_cpu: HICON,
+    tray_icon_fallback: HICON,
+    pub(crate) settings_window: HWND,
     notify_text_buf: Vec<u16>,
 }
 
@@ -64,10 +68,14 @@ impl AppState {
             visible_processes: Vec::new(),
             current_ram_percent: 0,
             cpu_monitor: CpuThrottleMonitor::new(),
+            cpu_throttling: false,
             // Same color as the window background: used as the background
             // brush when painting the red throttling label.
             window_bg_brush: unsafe { CreateSolidBrush(crate::ui::window::APP_WINDOW_BG_COLOR) },
-            tray_icon: std::ptr::null_mut(),
+            tray_icon_ram: std::ptr::null_mut(),
+            tray_icon_cpu: std::ptr::null_mut(),
+            tray_icon_fallback: std::ptr::null_mut(),
+            settings_window: std::ptr::null_mut(),
             notify_text_buf: Vec::new(),
         }
     }
@@ -77,7 +85,8 @@ pub fn run() -> AppResult<()> {
     let mut settings = load_settings().unwrap_or_else(|_| AppSettings::default());
     settings = settings.normalized();
 
-    let start_in_background_from_cli = std::env::args().any(|a| a.eq_ignore_ascii_case("--background"));
+    let start_in_background_from_cli =
+        std::env::args().any(|a| a.eq_ignore_ascii_case("--background"));
 
     let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) } as HINSTANCE;
     if hinstance.is_null() {
@@ -86,6 +95,10 @@ pub fn run() -> AppResult<()> {
 
     if !register_main_window_class(hinstance, wnd_proc) {
         return Err(AppError::WinApi("RegisterClassW failed"));
+    }
+
+    if !register_settings_window_class(hinstance) {
+        return Err(AppError::WinApi("RegisterClassW (settings) failed"));
     }
 
     let boxed_state = Box::new(AppState::new(settings));
@@ -102,7 +115,7 @@ pub fn run() -> AppResult<()> {
     // Hide the window only when explicitly requested: started by Windows
     // autostart (--background) or the "window_start_hidden" setting.
     // A manual double-click always shows the window, even if
-    // "Avvio in background" is enabled.
+    // "Start in background" is enabled.
     let start_hidden = unsafe {
         let state = &*state_ptr;
         state.settings.window_start_hidden || start_in_background_from_cli
@@ -123,7 +136,12 @@ pub fn run() -> AppResult<()> {
     Ok(())
 }
 
-unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     match msg {
         WM_CREATE => {
             let cs = lparam as *const CREATESTRUCTW;
@@ -138,19 +156,6 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             create_controls(hwnd, hinstance);
 
             if let Some(state) = get_state_mut(hwnd) {
-                set_checkbox(hwnd, IDC_START_ON_WINDOWS, state.settings.start_on_windows);
-                set_checkbox(hwnd, IDC_START_IN_BACKGROUND, state.settings.start_in_background);
-                set_checkbox(hwnd, IDC_TRAY_THERMAL_RED, state.settings.tray_icon_thermal_red);
-                set_label_text(
-                    hwnd,
-                    IDC_INTERVAL_EDIT,
-                    &state.settings.refresh_interval_seconds.to_string(),
-                );
-
-                let initial_tip = format!("RAM {}", state.current_ram_percent);
-                state.tray_icon = build_percentage_icon(state.current_ram_percent, false);
-                let _ = add_tray_icon(hwnd, &initial_tip, state.tray_icon);
-
                 let _ = SetTimer(
                     hwnd,
                     TIMER_REFRESH_ID,
@@ -165,18 +170,18 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
         }
         WM_NOTIFY => {
             let nmhdr = lparam as *const windows_sys::Win32::UI::Controls::NMHDR;
-            if !nmhdr.is_null() {
-                if (*nmhdr).idFrom as i32 == IDC_PROCESS_LIST && (*nmhdr).code == LVN_GETDISPINFOW {
-                    if let Some(state) = get_state_mut(hwnd) {
-                        let info = lparam as *mut NMLVDISPINFOW;
-                        if !info.is_null() {
-                            let item = &mut (*info).item;
-                            if (item.mask & LVIF_TEXT as u32) != 0 {
-                                let text = process_cell_text(state, item.iItem, item.iSubItem);
-                                state.notify_text_buf = wide(&text);
-                                item.pszText = state.notify_text_buf.as_mut_ptr();
-                            }
-                        }
+            if !nmhdr.is_null()
+                && (*nmhdr).idFrom as i32 == IDC_PROCESS_LIST
+                && (*nmhdr).code == LVN_GETDISPINFOW
+                && let Some(state) = get_state_mut(hwnd)
+            {
+                let info = lparam as *mut NMLVDISPINFOW;
+                if !info.is_null() {
+                    let item = &mut (*info).item;
+                    if item.mask & LVIF_TEXT != 0 {
+                        let text = process_cell_text(state, item.iItem, item.iSubItem);
+                        state.notify_text_buf = wide(&text);
+                        item.pszText = state.notify_text_buf.as_mut_ptr();
                     }
                 }
             }
@@ -184,7 +189,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
         }
         WM_COMMAND => {
             let id = loword(wparam as u32) as i32;
-            let notify = hiword(wparam as u32) as u16;
+            let notify = hiword(wparam as u32);
 
             match id {
                 IDC_SEARCH if notify == EN_CHANGE as u16 => {
@@ -205,16 +210,10 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                         rebuild_visible_and_render(hwnd, state);
                     }
                 }
-                IDC_APPLY_SETTINGS if notify == BN_CLICKED as u16 => {
-                    apply_settings_from_ui(hwnd);
-                }
-                // Settings checkboxes save immediately on click (no need to
-                // press "Applica"): the user expects the flag to persist
-                // as soon as it is toggled.
-                (IDC_START_ON_WINDOWS | IDC_START_IN_BACKGROUND | IDC_TRAY_THERMAL_RED)
-                    if notify == BN_CLICKED as u16 =>
-                {
-                    apply_settings_from_ui(hwnd);
+                IDC_SETTINGS_BUTTON if notify == BN_CLICKED as u16 => {
+                    if let Some(state) = get_state_mut(hwnd) {
+                        open_settings(hwnd, state);
+                    }
                 }
                 IDC_TERMINATE_PROCESS if notify == BN_CLICKED as u16 => {
                     terminate_selected_process(hwnd);
@@ -225,10 +224,10 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             0
         }
         WM_TIMER => {
-            if wparam == TIMER_REFRESH_ID {
-                if let Some(state) = get_state_mut(hwnd) {
-                    refresh_ui_data(hwnd, state);
-                }
+            if wparam == TIMER_REFRESH_ID
+                && let Some(state) = get_state_mut(hwnd)
+            {
+                refresh_ui_data(hwnd, state);
             }
             0
         }
@@ -264,13 +263,25 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
         }
         WM_DESTROY => {
             let _ = KillTimer(hwnd, TIMER_REFRESH_ID);
-            remove_tray_icon(hwnd);
+            remove_tray_icon(hwnd, TRAY_UID_RAM);
+            remove_tray_icon(hwnd, TRAY_UID_CPU);
+            remove_tray_icon(hwnd, TRAY_UID_FALLBACK);
 
-            let state_ptr = windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+            let state_ptr =
+                windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWLP_USERDATA)
+                    as *mut AppState;
             if !state_ptr.is_null() {
-                if !(*state_ptr).tray_icon.is_null() {
-                    destroy_icon((*state_ptr).tray_icon);
-                    (*state_ptr).tray_icon = std::ptr::null_mut();
+                if !(*state_ptr).tray_icon_ram.is_null() {
+                    destroy_icon((*state_ptr).tray_icon_ram);
+                    (*state_ptr).tray_icon_ram = std::ptr::null_mut();
+                }
+                if !(*state_ptr).tray_icon_cpu.is_null() {
+                    destroy_icon((*state_ptr).tray_icon_cpu);
+                    (*state_ptr).tray_icon_cpu = std::ptr::null_mut();
+                }
+                if !(*state_ptr).tray_icon_fallback.is_null() {
+                    destroy_icon((*state_ptr).tray_icon_fallback);
+                    (*state_ptr).tray_icon_fallback = std::ptr::null_mut();
                 }
                 if !(*state_ptr).window_bg_brush.is_null() {
                     let _ = DeleteObject((*state_ptr).window_bg_brush);
@@ -288,15 +299,14 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             let control = lparam as HWND;
             if !control.is_null()
                 && unsafe { GetDlgCtrlID(control) } == IDC_HEADER_CPU_THROTTLE
+                && let Some(state) = get_state_mut(hwnd)
             {
-                if let Some(state) = get_state_mut(hwnd) {
-                    unsafe {
-                        // COLORREF format is 0x00BBGGRR: red.
-                        SetTextColor(wparam as HDC, 0x0000FF);
-                        SetBkMode(wparam as HDC, TRANSPARENT as i32);
-                    }
-                    return state.window_bg_brush as LRESULT;
+                unsafe {
+                    // COLORREF format is 0x00BBGGRR: red.
+                    SetTextColor(wparam as HDC, 0x0000FF);
+                    SetBkMode(wparam as HDC, TRANSPARENT as i32);
                 }
+                return state.window_bg_brush as LRESULT;
             }
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
@@ -325,103 +335,179 @@ fn get_state_mut(hwnd: HWND) -> Option<&'static mut AppState> {
 }
 
 fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
+    // RAM and CPU sampling run in parallel: both are non-blocking Win32 calls,
+    // and the CPU path (per-core MSR reads with affinity pinning) is the
+    // slower of the two.
+    let mut cpu_throttling = false;
+    let mut ram_status: Option<(u32, u64)> = None;
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            cpu_throttling = state.cpu_monitor.refresh();
+        });
+        s.spawn(|| {
+            ram_status = total_memory_status().ok();
+        });
+    });
+
+    // Average core temperature: only available on the MSR (driver) path.
+    let cpu_temp = state.cpu_monitor.avg_temperature_celsius();
+    let cpu_temp_label = match cpu_temp {
+        Some(t) => format!("CPU avg: {:.0} C", t),
+        None => "CPU avg: n/a".to_string(),
+    };
+    set_label_text(hwnd, IDC_HEADER_CPU_TEMP, &cpu_temp_label);
+
     // Thermal throttling check: same refresh interval as the RAM percentage.
     // A single throttled core is enough to light up the warning.
-    let cpu_throttling = state.cpu_monitor.refresh();
     set_label_text(
         hwnd,
         IDC_HEADER_CPU_THROTTLE,
-        if cpu_throttling { "CPU thermal throttling" } else { "" },
+        if cpu_throttling {
+            "CPU thermal throttling"
+        } else {
+            ""
+        },
     );
 
-    // Tray icon turns red while throttling when the option is enabled.
-    let tray_red = state.settings.tray_icon_thermal_red && cpu_throttling;
+    // The tray icons (RAM + CPU) are refreshed on every tick: colors come
+    // from the settings, with the red override while thermal throttling.
+    state.cpu_throttling = cpu_throttling;
 
-    if let Ok((ram_percent, total_ram_bytes)) = total_memory_status() {
+    let total_ram_bytes = if let Some((ram_percent, total)) = ram_status {
         state.current_ram_percent = ram_percent;
 
         set_label_text(
             hwnd,
             IDC_HEADER_RAM,
-            &format!("RAM totale usata: {}", state.current_ram_percent),
+            &format!("Total RAM used: {}%", state.current_ram_percent),
         );
-        update_tray_tooltip(hwnd, &format!("RAM {}", state.current_ram_percent));
+        Some(total)
+    } else {
+        None
+    };
 
-        let new_icon = build_percentage_icon(state.current_ram_percent, tray_red);
-        if !new_icon.is_null() {
-            update_tray_icon(hwnd, new_icon);
-            if !state.tray_icon.is_null() {
-                destroy_icon(state.tray_icon);
-            }
-            state.tray_icon = new_icon;
-        }
+    refresh_tray_icons(hwnd, state);
 
+    if let Some(total_ram_bytes) = total_ram_bytes {
         state.all_processes = snapshot_processes(total_ram_bytes);
         rebuild_visible_and_render(hwnd, state);
     }
 }
 
 fn rebuild_visible_and_render(hwnd: HWND, state: &mut AppState) {
-    state.visible_processes = apply_filter_and_sort(&state.all_processes, &state.search_query, state.sort);
+    state.visible_processes =
+        apply_filter_and_sort(&state.all_processes, &state.search_query, state.sort);
     set_virtual_item_count(hwnd, state.visible_processes.len());
 }
 
-fn apply_settings_from_ui(hwnd: HWND) {
-    let Some(state) = get_state_mut(hwnd) else {
-        return;
-    };
+/// Rebuilds both tray icons from the current settings: each icon is added
+/// or removed according to its enable flag and redrawn with the configured
+/// colors (red background while thermal throttling).
+pub(crate) fn refresh_tray_icons(hwnd: HWND, state: &mut AppState) {
+    let red = state.settings.tray_icon_thermal_red && state.cpu_throttling;
 
-    let mut new_settings = state.settings.clone();
-    new_settings.start_on_windows = is_checkbox_checked(hwnd, IDC_START_ON_WINDOWS);
-    new_settings.start_in_background = is_checkbox_checked(hwnd, IDC_START_IN_BACKGROUND);
-    new_settings.tray_icon_thermal_red = is_checkbox_checked(hwnd, IDC_TRAY_THERMAL_RED);
-
-    let interval_text = get_control_text(hwnd, IDC_INTERVAL_EDIT);
-    new_settings.refresh_interval_seconds =
-        parse_refresh_interval_seconds(&interval_text, state.settings.refresh_interval_seconds);
-
-    if new_settings.start_on_windows != state.settings.start_on_windows
-        || new_settings.start_in_background != state.settings.start_in_background
-    {
-        match std::env::current_exe() {
-            Ok(exe) => {
-                if let Err(err) = set_autostart(
-                    new_settings.start_on_windows,
-                    new_settings.start_in_background,
-                    &exe,
-                ) {
-                    show_error(hwnd, &format!("Errore aggiornamento autostart: {err}"));
-                }
-            }
-            Err(err) => show_error(hwnd, &format!("Impossibile leggere path eseguibile: {err}")),
-        }
-    }
-
-    if let Err(err) = save_settings(&new_settings) {
-        show_error(hwnd, &format!("Errore salvataggio impostazioni: {err}"));
-        return;
-    }
-
-    state.settings = new_settings.normalized();
-
-    unsafe {
-        let _ = KillTimer(hwnd, TIMER_REFRESH_ID);
-        let _ = SetTimer(
-            hwnd,
-            TIMER_REFRESH_ID,
-            (state.settings.refresh_interval_seconds * 1000) as u32,
-            None,
-        );
-    }
-
-    set_label_text(
+    let ram_tip = format!("RAM {}%", state.current_ram_percent);
+    apply_tray_icon(
         hwnd,
-        IDC_INTERVAL_EDIT,
-        &state.settings.refresh_interval_seconds.to_string(),
+        TRAY_UID_RAM,
+        &mut state.tray_icon_ram,
+        state.settings.tray_icon_ram_enabled,
+        build_ram_icon(
+            state.current_ram_percent,
+            red,
+            state.settings.tray_icon_ram_bg,
+            state.settings.tray_icon_ram_fg,
+            state.settings.tray_icon_font_size,
+        ),
+        &ram_tip,
+    );
+
+    let temp = state
+        .cpu_monitor
+        .avg_temperature_celsius()
+        .map(|t| t as u32);
+    let cpu_tip = match temp {
+        Some(t) => format!("CPU avg {t} C"),
+        None => "CPU avg: n/a (WinRing0 driver missing)".to_string(),
+    };
+    apply_tray_icon(
+        hwnd,
+        TRAY_UID_CPU,
+        &mut state.tray_icon_cpu,
+        state.settings.tray_icon_cpu_enabled,
+        build_cpu_icon(
+            temp,
+            red,
+            state.settings.tray_icon_cpu_bg,
+            state.settings.tray_icon_cpu_fg,
+            state.settings.tray_icon_font_size,
+        ),
+        &cpu_tip,
+    );
+
+    // With both icons off the tray would go silent: keep a plain "AT" badge
+    // so the app is still visibly running in the background.
+    let show_fallback =
+        !state.settings.tray_icon_ram_enabled && !state.settings.tray_icon_cpu_enabled;
+    let fallback_icon = if show_fallback {
+        build_fallback_icon()
+    } else {
+        std::ptr::null_mut()
+    };
+    apply_tray_icon(
+        hwnd,
+        TRAY_UID_FALLBACK,
+        &mut state.tray_icon_fallback,
+        show_fallback,
+        fallback_icon,
+        "Activity Tracker",
     );
 }
 
-fn show_error(hwnd: HWND, text: &str) {
+fn apply_tray_icon(
+    hwnd: HWND,
+    uid: u32,
+    current: &mut HICON,
+    enabled: bool,
+    icon: HICON,
+    tip: &str,
+) {
+    if !enabled {
+        if !current.is_null() {
+            remove_tray_icon(hwnd, uid);
+            destroy_icon(*current);
+            *current = std::ptr::null_mut();
+        }
+        return;
+    }
+
+    if icon.is_null() {
+        return;
+    }
+
+    if current.is_null() {
+        if add_tray_icon(hwnd, uid, tip, icon) {
+            *current = icon;
+        } else {
+            destroy_icon(icon);
+        }
+    } else {
+        update_tray_icon(hwnd, uid, icon);
+        update_tray_tooltip(hwnd, uid, tip);
+        destroy_icon(*current);
+        *current = icon;
+    }
+}
+
+/// Restarts the main refresh timer with the given interval (seconds).
+pub(crate) fn restart_refresh_timer(hwnd: HWND, seconds: u64) {
+    unsafe {
+        let _ = KillTimer(hwnd, TIMER_REFRESH_ID);
+        let _ = SetTimer(hwnd, TIMER_REFRESH_ID, (seconds * 1000) as u32, None);
+    }
+}
+
+pub(crate) fn show_error(hwnd: HWND, text: &str) {
     let title = wide("Activity Tracker");
     let message = wide(text);
 
@@ -454,17 +540,20 @@ fn terminate_selected_process(hwnd: HWND) {
     };
 
     let Some(row) = selected_process_row(hwnd) else {
-        show_error(hwnd, "Seleziona un processo dalla lista prima di terminarlo.");
+        show_error(hwnd, "Select a process from the list first.");
         return;
     };
 
     let Some(proc_info) = state.visible_processes.get(row as usize).cloned() else {
-        show_error(hwnd, "Processo selezionato non valido.");
+        show_error(hwnd, "Invalid process.");
         return;
     };
 
     if proc_info.pid == std::process::id() {
-        show_error(hwnd, "Non puoi terminare l'applicazione corrente da questa azione.");
+        show_error(
+            hwnd,
+            "You cannot terminate the current application from here.",
+        );
         return;
     }
 
@@ -472,7 +561,7 @@ fn terminate_selected_process(hwnd: HWND) {
         show_error(
             hwnd,
             &format!(
-                "Impossibile terminare il processo {} (PID {}): {}",
+                "Could not terminate process {} (PID {}): {}",
                 proc_info.name, proc_info.pid, err
             ),
         );
