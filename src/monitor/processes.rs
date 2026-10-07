@@ -7,7 +7,9 @@ use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
-use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+use windows_sys::Win32::System::ProcessStatus::{
+    GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
+};
 use windows_sys::Win32::System::Threading::{
     OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ,
     TerminateProcess,
@@ -29,7 +31,7 @@ pub fn snapshot_processes(total_ram_bytes: u64) -> Vec<ProcessInfo> {
         let pid = pe.th32ProcessID;
         let name = utf16_to_string(&pe.szExeFile);
 
-        if let Some(memory_bytes) = process_working_set_bytes(pid) {
+        if let Some(memory_bytes) = process_private_ws_bytes(pid) {
             let memory_mib = memory_bytes as f64 / 1024.0 / 1024.0;
             let memory_percent = if total_ram_bytes == 0 {
                 0.0
@@ -56,7 +58,11 @@ pub fn snapshot_processes(total_ram_bytes: u64) -> Vec<ProcessInfo> {
     out
 }
 
-fn process_working_set_bytes(pid: u32) -> Option<u64> {
+/// Private working set in bytes: the value shown in the Task Manager's
+/// "Memory" column. The plain `WorkingSetSize` would also count file-backed
+/// pages — e.g. a llama.cpp server with an mmap'ed model would report the
+/// whole model size instead of its real RAM usage.
+fn process_private_ws_bytes(pid: u32) -> Option<u64> {
     let handle =
         unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
 
@@ -64,12 +70,14 @@ fn process_working_set_bytes(pid: u32) -> Option<u64> {
         return None;
     }
 
-    let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    let mut counters: PROCESS_MEMORY_COUNTERS_EX = unsafe { std::mem::zeroed() };
     let ok = unsafe {
         GetProcessMemoryInfo(
             handle,
-            &mut counters,
-            std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+            // The API takes the smaller struct and the cb field selects the
+            // EX layout (classic Win32 pattern).
+            &mut counters as *mut PROCESS_MEMORY_COUNTERS_EX as *mut PROCESS_MEMORY_COUNTERS,
+            std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32,
         )
     };
 
@@ -81,7 +89,7 @@ fn process_working_set_bytes(pid: u32) -> Option<u64> {
         return None;
     }
 
-    Some(counters.WorkingSetSize as u64)
+    Some(counters.PrivateUsage as u64)
 }
 
 fn utf16_to_string(buf: &[u16]) -> String {
