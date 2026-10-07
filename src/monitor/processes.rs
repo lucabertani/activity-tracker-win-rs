@@ -57,13 +57,8 @@ pub fn snapshot_processes(total_ram_bytes: u64) -> Vec<ProcessInfo> {
 }
 
 fn process_working_set_bytes(pid: u32) -> Option<u64> {
-    let handle = unsafe {
-        OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
-            0,
-            pid,
-        )
-    };
+    let handle =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
 
     if handle.is_null() {
         return None;
@@ -91,13 +86,21 @@ fn process_working_set_bytes(pid: u32) -> Option<u64> {
 
 fn utf16_to_string(buf: &[u16]) -> String {
     let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    OsString::from_wide(&buf[..end]).to_string_lossy().into_owned()
+    OsString::from_wide(&buf[..end])
+        .to_string_lossy()
+        .into_owned()
 }
 
 pub fn terminate_process(pid: u32) -> Result<(), String> {
-    let handle = unsafe { OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let handle = unsafe {
+        OpenProcess(
+            PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+            0,
+            pid,
+        )
+    };
     if handle.is_null() {
-        return Err("Impossibile aprire il processo (permessi insufficienti?)".to_string());
+        return Err("Could not open the process (insufficient permissions?)".to_string());
     }
 
     let ok = unsafe { TerminateProcess(handle, 1) };
@@ -106,7 +109,7 @@ pub fn terminate_process(pid: u32) -> Result<(), String> {
     }
 
     if ok == 0 {
-        return Err("Terminazione fallita".to_string());
+        return Err("Termination failed".to_string());
     }
 
     Ok(())
@@ -142,10 +145,11 @@ fn compare_process(a: &ProcessInfo, b: &ProcessInfo, sort: SortState) -> Orderin
             .to_ascii_lowercase()
             .cmp(&b.name.to_ascii_lowercase())
             .then(a.pid.cmp(&b.pid)),
-        SortColumn::Memory => a
-            .memory_bytes
-            .cmp(&b.memory_bytes)
-            .then(a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase())),
+        SortColumn::Memory => a.memory_bytes.cmp(&b.memory_bytes).then(
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase()),
+        ),
     };
 
     match sort.sort_direction {

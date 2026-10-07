@@ -14,8 +14,8 @@ pub fn show_tray_context_menu(hwnd: HWND, x: i32, y: i32) -> u16 {
             return 0;
         }
 
-        let open = wide("Apri finestra");
-        let exit = wide("Esci");
+        let open = wide("Open window");
+        let exit = wide("Exit");
 
         let _ = AppendMenuW(menu, MF_STRING, CMD_OPEN_WINDOW as usize, open.as_ptr());
         let _ = AppendMenuW(menu, MF_STRING, CMD_EXIT_APP as usize, exit.as_ptr());

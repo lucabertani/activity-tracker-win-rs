@@ -12,7 +12,7 @@ Y_MIN, Y_MAX = -1.25, 1.25
 
 
 def init_worker():
-    """Informa i processi figli di ignorare SIGINT: ci penserà il padre."""
+    """Tell child processes to ignore SIGINT: the parent handles it."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
@@ -36,12 +36,12 @@ def compute_row(y_idx):
 
 
 def main():
-    # Passiamo initializer=init_worker al pool
+    # We pass initializer=init_worker to the pool
     pool = mp.Pool(processes=CORES, initializer=init_worker)
 
     try:
-        # Usiamo map_async con un timeout molto lungo (es. 999999 secondi)
-        # Questo permette a Python di intercettare il Ctrl+C (KeyboardInterrupt)
+        # We use map_async with a very long timeout (e.g. 999999 seconds)
+        # This lets Python catch Ctrl+C (KeyboardInterrupt)
         async_res = pool.map_async(compute_row, range(HEIGHT))
         result_matrix = async_res.get(timeout=999999)
         
@@ -50,8 +50,8 @@ def main():
         return result_matrix
 
     except KeyboardInterrupt:
-        print("\n[!] Interruzione da tastiera rilevata. Arresto dei 20 processi...")
-        pool.terminate()  # Forza l'uccisione immediata dei processi worker
+        print("\n[!] Keyboard interrupt detected. Terminating the 20 processes...")
+        pool.terminate()  # Forces immediate killing of the worker processes
         pool.join()
         sys.exit(1)
 

@@ -14,8 +14,6 @@ fn main() {
             .filter(|c| c.cpu_usage() >= 50.0)
             .map(|c| (c.frequency(), c.cpu_usage() as u32))
             .collect();
-        println!(
-            "[{i}] throttling={throttling} max_freq={max_freq} MHz busy_cores={busy:?}"
-        );
+        println!("[{i}] throttling={throttling} max_freq={max_freq} MHz busy_cores={busy:?}");
     }
 }
