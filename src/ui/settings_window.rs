@@ -451,8 +451,16 @@ fn create_controls(hwnd: HWND, data: &mut SettingsData) {
         create_swatch(hwnd, IDC_SWATCH_CPU_BG, 172, 150, &class_label),
         create_label(hwnd, hinstance, &class_label, "Text", 228, 152, 40),
         create_swatch(hwnd, IDC_SWATCH_CPU_FG, 274, 150, &class_label),
-        create_label(hwnd, hinstance, &class_label, "Font size:", 76, 196, 80),
-        create_font_size_combo(hwnd, hinstance, 172, 194),
+        create_label(
+            hwnd,
+            hinstance,
+            &class_label,
+            "Font size (both icons):",
+            32,
+            196,
+            150,
+        ),
+        create_font_size_combo(hwnd, hinstance, 190, 194),
         create_button(
             hwnd,
             hinstance,
