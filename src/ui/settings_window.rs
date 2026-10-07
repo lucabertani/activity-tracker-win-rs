@@ -36,8 +36,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 use crate::app::{AppState, refresh_tray_icons, restart_refresh_timer, show_error};
 use crate::model::{
-    AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_ICON_FONT_SIZE,
-    DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG, parse_refresh_interval_seconds,
+    AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_FONT_WEIGHT,
+    DEFAULT_TRAY_ICON_FONT_SIZE, DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG,
+    parse_refresh_interval_seconds,
 };
 use crate::settings::autostart::set_autostart;
 use crate::settings::store::save_settings;
@@ -70,9 +71,12 @@ const IDC_SWATCH_CPU_BG: i32 = 3107;
 const IDC_SWATCH_CPU_FG: i32 = 3108;
 const IDC_BTN_RESTORE: i32 = 3109;
 const IDC_COMBO_FONT_SIZE: i32 = 3110;
+const IDC_COMBO_FONT_WEIGHT: i32 = 3111;
 
 /// Font size options for the tray icons' text (pixels); 0 = automatic.
-const FONT_SIZE_OPTIONS: [u32; 9] = [0, 14, 16, 18, 20, 22, 24, 28, 32];
+const FONT_SIZE_OPTIONS: [u32; 8] = [0, 14, 15, 16, 17, 18, 19, 20];
+/// Font weight options (Segoe UI scale): from almost thin to heavy.
+const FONT_WEIGHT_OPTIONS: [u32; 10] = [100, 150, 200, 250, 300, 350, 400, 450, 500, 550];
 
 #[allow(clippy::upper_case_acronyms)]
 type HICON = windows_sys::Win32::UI::WindowsAndMessaging::HICON;
@@ -220,6 +224,7 @@ unsafe extern "system" fn wnd_proc(
                 IDC_BTN_APPLY if notify == BN_CLICKED => on_apply(hwnd, data),
                 IDC_BTN_RESTORE if notify == BN_CLICKED => on_restore_defaults(hwnd, data),
                 IDC_COMBO_FONT_SIZE if notify == CBN_SELCHANGE => on_font_size(hwnd, data),
+                IDC_COMBO_FONT_WEIGHT if notify == CBN_SELCHANGE => on_font_weight(hwnd, data),
                 IDC_BTN_CLOSE if notify == BN_CLICKED => {
                     DestroyWindow(hwnd);
                 }
@@ -458,16 +463,43 @@ fn create_controls(hwnd: HWND, data: &mut SettingsData) {
             "Font size (both icons):",
             32,
             196,
-            150,
+            180,
         ),
-        create_font_size_combo(hwnd, hinstance, 190, 194),
+        create_option_combo(
+            hwnd,
+            hinstance,
+            220,
+            194,
+            IDC_COMBO_FONT_SIZE,
+            &font_size_labels(),
+        ),
+        create_label(
+            hwnd,
+            hinstance,
+            &class_label,
+            "Font weight (both icons):",
+            32,
+            224,
+            180,
+        ),
+        create_option_combo(
+            hwnd,
+            hinstance,
+            220,
+            222,
+            IDC_COMBO_FONT_WEIGHT,
+            &FONT_WEIGHT_OPTIONS
+                .iter()
+                .map(|weight| weight.to_string())
+                .collect::<Vec<_>>(),
+        ),
         create_button(
             hwnd,
             hinstance,
             &class_checkbox,
             "Restore defaults",
             32,
-            230,
+            258,
             130,
             26,
             IDC_BTN_RESTORE,
@@ -478,7 +510,7 @@ fn create_controls(hwnd: HWND, data: &mut SettingsData) {
             &class_label,
             "Tip: click a colored square to change its color.",
             76,
-            268,
+            296,
             340,
         ),
     ];
@@ -658,8 +690,15 @@ fn show_page(_hwnd: HWND, data: &SettingsData, page: usize) {
     }
 }
 
-/// Native dropdown with the tray icon font size options (Auto, 14..32 px).
-fn create_font_size_combo(hwnd: HWND, hinstance: HINSTANCE, x: i32, y: i32) -> HWND {
+/// Native dropdown built from a fixed list of labels.
+fn create_option_combo(
+    hwnd: HWND,
+    hinstance: HINSTANCE,
+    x: i32,
+    y: i32,
+    id: i32,
+    labels: &[String],
+) -> HWND {
     let combo = unsafe {
         CreateWindowExW(
             WS_EX_CLIENTEDGE,
@@ -671,23 +710,32 @@ fn create_font_size_combo(hwnd: HWND, hinstance: HINSTANCE, x: i32, y: i32) -> H
             80,
             200,
             hwnd,
-            IDC_COMBO_FONT_SIZE as HMENU,
+            id as HMENU,
             hinstance,
             std::ptr::null_mut(),
         )
     };
-    for option in FONT_SIZE_OPTIONS.iter() {
-        let text = if *option == 0 {
-            "Auto".to_string()
-        } else {
-            option.to_string()
-        };
-        let label = wide(&text);
+    for label in labels {
+        let wide_label = wide(label);
         unsafe {
-            SendMessageW(combo, CB_ADDSTRING, 0, label.as_ptr() as isize);
+            SendMessageW(combo, CB_ADDSTRING, 0, wide_label.as_ptr() as isize);
         }
     }
     combo
+}
+
+/// Size combo labels: "Auto" for 0, otherwise the pixel value.
+fn font_size_labels() -> Vec<String> {
+    FONT_SIZE_OPTIONS
+        .iter()
+        .map(|option| {
+            if *option == 0 {
+                "Auto".to_string()
+            } else {
+                option.to_string()
+            }
+        })
+        .collect()
 }
 
 /// Resynchronizes every control with the current settings.
@@ -717,6 +765,21 @@ fn sync_controls(hwnd: HWND, data: &mut SettingsData) {
         .iter()
         .position(|option| *option == state.settings.tray_icon_font_size)
         .unwrap_or(0);
+    unsafe {
+        SendMessageW(combo, CB_SETCURSEL, index, 0);
+    }
+
+    // Font weight dropdown: select the stored value (default if unknown).
+    let combo = unsafe { GetDlgItem(hwnd, IDC_COMBO_FONT_WEIGHT) };
+    let index = FONT_WEIGHT_OPTIONS
+        .iter()
+        .position(|option| *option == state.settings.tray_icon_font_weight)
+        .unwrap_or_else(|| {
+            FONT_WEIGHT_OPTIONS
+                .iter()
+                .position(|option| *option == DEFAULT_TRAY_FONT_WEIGHT)
+                .unwrap_or(0)
+        });
     unsafe {
         SendMessageW(combo, CB_SETCURSEL, index, 0);
     }
@@ -775,6 +838,7 @@ fn update_preview_ram(data: &mut SettingsData) {
         state.settings.tray_icon_ram_bg,
         state.settings.tray_icon_ram_fg,
         state.settings.tray_icon_font_size,
+        state.settings.tray_icon_font_weight,
     );
     if !icon.is_null() {
         set_preview(&mut data.last_preview_ram, data.preview_ram, icon);
@@ -793,6 +857,7 @@ fn update_preview_cpu(data: &mut SettingsData) {
         state.settings.tray_icon_cpu_bg,
         state.settings.tray_icon_cpu_fg,
         state.settings.tray_icon_font_size,
+        state.settings.tray_icon_font_weight,
     );
     if !icon.is_null() {
         set_preview(&mut data.last_preview_cpu, data.preview_cpu, icon);
@@ -918,6 +983,24 @@ fn on_font_size(hwnd: HWND, data: &mut SettingsData) {
     refresh_tray_icons(main_hwnd(hwnd), state);
 }
 
+fn on_font_weight(hwnd: HWND, data: &mut SettingsData) {
+    let state = unsafe { &mut *data.state };
+    let combo = unsafe { GetDlgItem(hwnd, IDC_COMBO_FONT_WEIGHT) };
+    let index = unsafe { SendMessageW(combo, CB_GETCURSEL, 0, 0) } as usize;
+    state.settings.tray_icon_font_weight = *FONT_WEIGHT_OPTIONS
+        .get(index)
+        .unwrap_or(&DEFAULT_TRAY_FONT_WEIGHT);
+
+    if let Err(err) = save_settings(&state.settings) {
+        show_error(hwnd, &format!("Could not save settings: {err}"));
+        return;
+    }
+
+    update_preview_ram(data);
+    update_preview_cpu(data);
+    refresh_tray_icons(main_hwnd(hwnd), state);
+}
+
 fn on_apply(hwnd: HWND, data: &mut SettingsData) {
     let state = unsafe { &mut *data.state };
     let text = get_control_text(hwnd, IDC_EDIT_INTERVAL);
@@ -942,6 +1025,7 @@ fn on_restore_defaults(hwnd: HWND, data: &mut SettingsData) {
     s.tray_icon_cpu_bg = DEFAULT_TRAY_CPU_BG;
     s.tray_icon_cpu_fg = DEFAULT_TRAY_CPU_FG;
     s.tray_icon_font_size = DEFAULT_TRAY_ICON_FONT_SIZE;
+    s.tray_icon_font_weight = DEFAULT_TRAY_FONT_WEIGHT;
     s.tray_icon_thermal_red = false;
 
     if let Err(err) = save_settings(s) {

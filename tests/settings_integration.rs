@@ -3,8 +3,8 @@
 use std::sync::Mutex;
 
 use activity_tracker_win_rs::model::{
-    AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_RAM_BG,
-    DEFAULT_TRAY_RAM_FG, parse_refresh_interval_seconds,
+    AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_FONT_WEIGHT,
+    DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG, parse_refresh_interval_seconds,
 };
 use activity_tracker_win_rs::settings::store::{load_settings, save_settings, settings_path};
 
@@ -33,6 +33,7 @@ fn settings_roundtrip_uses_appdata_location() {
         tray_icon_cpu_bg: DEFAULT_TRAY_CPU_BG,
         tray_icon_cpu_fg: DEFAULT_TRAY_CPU_FG,
         tray_icon_font_size: 0,
+        tray_icon_font_weight: DEFAULT_TRAY_FONT_WEIGHT,
     };
 
     save_settings(&source).expect("save settings");

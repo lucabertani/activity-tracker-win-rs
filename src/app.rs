@@ -460,6 +460,7 @@ pub(crate) fn refresh_tray_icons(hwnd: HWND, state: &mut AppState) {
             state.settings.tray_icon_ram_bg,
             state.settings.tray_icon_ram_fg,
             state.settings.tray_icon_font_size,
+            state.settings.tray_icon_font_weight,
         ),
         &ram_tip,
     );
@@ -483,6 +484,7 @@ pub(crate) fn refresh_tray_icons(hwnd: HWND, state: &mut AppState) {
             state.settings.tray_icon_cpu_bg,
             state.settings.tray_icon_cpu_fg,
             state.settings.tray_icon_font_size,
+            state.settings.tray_icon_font_weight,
         ),
         &cpu_tip,
     );
@@ -492,7 +494,7 @@ pub(crate) fn refresh_tray_icons(hwnd: HWND, state: &mut AppState) {
     let show_fallback =
         !state.settings.tray_icon_ram_enabled && !state.settings.tray_icon_cpu_enabled;
     let fallback_icon = if show_fallback {
-        build_fallback_icon()
+        build_fallback_icon(state.settings.tray_icon_font_weight)
     } else {
         std::ptr::null_mut()
     };

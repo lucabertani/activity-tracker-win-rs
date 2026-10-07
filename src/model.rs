@@ -98,6 +98,9 @@ pub struct AppSettings {
     /// (the text is sized to fit the icon).
     #[serde(default)]
     pub tray_icon_font_size: u32,
+    /// Font weight for the tray icons' text (Segoe UI scale).
+    #[serde(default = "default_font_weight")]
+    pub tray_icon_font_weight: u32,
 }
 
 fn default_true() -> bool {
@@ -113,6 +116,9 @@ pub const DEFAULT_TRAY_CPU_FG: u32 = TRAY_TEXT_COLOR;
 
 /// Tray icon text font size: 0 = automatic (fit to the icon).
 pub const DEFAULT_TRAY_ICON_FONT_SIZE: u32 = 0;
+/// Tray icon text font weight (Segoe UI scale: 300 light, 400 regular,
+/// 550 heavy). 350 is slightly lighter than regular.
+pub const DEFAULT_TRAY_FONT_WEIGHT: u32 = 350;
 
 fn default_ram_bg() -> u32 {
     DEFAULT_TRAY_RAM_BG
@@ -125,6 +131,9 @@ fn default_cpu_bg() -> u32 {
 }
 fn default_cpu_fg() -> u32 {
     DEFAULT_TRAY_CPU_FG
+}
+fn default_font_weight() -> u32 {
+    DEFAULT_TRAY_FONT_WEIGHT
 }
 
 impl Default for AppSettings {
@@ -143,6 +152,7 @@ impl Default for AppSettings {
             tray_icon_cpu_bg: DEFAULT_TRAY_CPU_BG,
             tray_icon_cpu_fg: DEFAULT_TRAY_CPU_FG,
             tray_icon_font_size: DEFAULT_TRAY_ICON_FONT_SIZE,
+            tray_icon_font_weight: DEFAULT_TRAY_FONT_WEIGHT,
         }
     }
 }

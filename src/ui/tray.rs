@@ -17,6 +17,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SM_CXSMICON, SM_CYSMICON,
 };
 
+use crate::model::DEFAULT_TRAY_FONT_WEIGHT;
+
 pub const TRAY_UID_RAM: u32 = 1;
 pub const TRAY_UID_CPU: u32 = 2;
 /// Shown only while both the RAM and CPU icons are disabled.
@@ -33,10 +35,13 @@ pub const TRAY_TEXT_COLOR: u32 = 0x00FFFFFF; // #ffffff
 // Font settings.
 //pub const TRAY_FONT_NAME: &str = "Tahoma";
 //pub const TRAY_FONT_NAME: &str = "Segoe Fluent Icons";
-//pub const TRAY_FONT_NAME: &str = "Segoe UI Variable";
-pub const TRAY_FONT_NAME: &str = "Segoe UI";
+// Plain "Segoe UI" is a static font: it only has a handful of fixed
+// weights, so the weight selector would collapse to 2-3 looks. The
+// Windows 11 variable font (segoeuiz.ttf) has a continuous weight axis,
+// which is what makes the 100..550 slider smooth.
+pub const TRAY_FONT_NAME: &str = "Segoe UI Variable";
+//pub const TRAY_FONT_NAME: &str = "Segoe UI";
 //pub const TRAY_FONT_NAME: &str = "Verdana";
-pub const TRAY_FONT_WEIGHT: i32 = 350;
 
 // Font height = (icon_height - offset).max(min_px), per digit count
 // (automatic mode only; an explicit size from the settings is used as-is).
@@ -138,7 +143,14 @@ pub fn build_percentage_icon(
     percent: u32,
     red: bool,
 ) -> windows_sys::Win32::UI::WindowsAndMessaging::HICON {
-    build_ram_icon(percent, red, TRAY_BG_COLOR, TRAY_TEXT_COLOR, 0)
+    build_ram_icon(
+        percent,
+        red,
+        TRAY_BG_COLOR,
+        TRAY_TEXT_COLOR,
+        0,
+        DEFAULT_TRAY_FONT_WEIGHT,
+    )
 }
 
 /// RAM tray icon with custom colors. `font_size` 0 = automatic.
@@ -148,12 +160,14 @@ pub fn build_ram_icon(
     bg: u32,
     fg: u32,
     font_size: u32,
+    weight: u32,
 ) -> windows_sys::Win32::UI::WindowsAndMessaging::HICON {
     build_text_icon(
         &percent.min(100).to_string(),
         if red { TRAY_BG_RED } else { bg },
         fg,
         font_size,
+        weight,
     )
 }
 
@@ -166,19 +180,26 @@ pub fn build_cpu_icon(
     bg: u32,
     fg: u32,
     font_size: u32,
+    weight: u32,
 ) -> windows_sys::Win32::UI::WindowsAndMessaging::HICON {
     let text = match temp_celsius {
         Some(t) => t.to_string(),
         None => "--".to_string(),
     };
-    build_text_icon(&text, if red { TRAY_BG_RED } else { bg }, fg, font_size)
+    build_text_icon(
+        &text,
+        if red { TRAY_BG_RED } else { bg },
+        fg,
+        font_size,
+        weight,
+    )
 }
 
 /// Fallback tray icon shown when both the RAM and CPU icons are disabled:
 /// a plain "AT" (Activity Tracker) badge, so the app is still visibly
 /// running in the background.
-pub fn build_fallback_icon() -> windows_sys::Win32::UI::WindowsAndMessaging::HICON {
-    build_text_icon("AT", TRAY_BG_COLOR, TRAY_TEXT_COLOR, 0)
+pub fn build_fallback_icon(weight: u32) -> windows_sys::Win32::UI::WindowsAndMessaging::HICON {
+    build_text_icon("AT", TRAY_BG_COLOR, TRAY_TEXT_COLOR, 0, weight)
 }
 
 /// Draws `text` centered on a solid `bg` with `fg` text color and returns a
@@ -186,11 +207,13 @@ pub fn build_fallback_icon() -> windows_sys::Win32::UI::WindowsAndMessaging::HIC
 /// `font_size` is the text height in pixels; 0 = automatic (fit to the
 /// icon size and digit count). Explicit sizes larger than the icon are
 /// clipped at the edges (the settings preview shows exactly that).
+/// `weight` is the Segoe UI font weight (300 light, 400 regular, 550 heavy).
 pub fn build_text_icon(
     text: &str,
     bg: u32,
     fg: u32,
     font_size: u32,
+    weight: u32,
 ) -> windows_sys::Win32::UI::WindowsAndMessaging::HICON {
     let width = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(TRAY_ICON_MIN_SIZE);
 
@@ -261,7 +284,7 @@ pub fn build_text_icon(
             0,
             0,
             0,
-            TRAY_FONT_WEIGHT,
+            weight as i32,
             0,
             0,
             0,
