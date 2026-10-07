@@ -2,10 +2,10 @@ use std::mem;
 
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
-    CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET,
-    DEFAULT_PITCH, DeleteDC, DeleteObject, FF_DONTCARE, FillRect, GetDC, HBRUSH, HGDIOBJ,
-    NONANTIALIASED_QUALITY, OUT_DEFAULT_PRECIS, ReleaseDC, SelectObject, SetBkMode, SetTextColor,
-    TRANSPARENT, TextOutW,
+    ANTIALIASED_QUALITY, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush,
+    DEFAULT_CHARSET, DEFAULT_PITCH, DeleteDC, DeleteObject, FF_DONTCARE, FillRect, GetDC, HBRUSH,
+    HGDIOBJ, OUT_DEFAULT_PRECIS, ReleaseDC, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    TextOutW,
 };
 use windows_sys::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
@@ -35,7 +35,7 @@ pub const TRAY_TEXT_COLOR: u32 = 0x00FFFFFF; // #ffffff
 //pub const TRAY_FONT_NAME: &str = "Segoe UI Variable";
 pub const TRAY_FONT_NAME: &str = "Segoe UI";
 //pub const TRAY_FONT_NAME: &str = "Verdana";
-pub const TRAY_FONT_WEIGHT: i32 = 550;
+pub const TRAY_FONT_WEIGHT: i32 = 350;
 
 // Font height = (icon_height - offset).max(min_px), per digit count.
 pub const TRAY_FONT_OFFSET_1: i32 = 2;
@@ -257,7 +257,7 @@ pub fn build_text_icon(
             DEFAULT_CHARSET as u32,
             OUT_DEFAULT_PRECIS as u32,
             0,
-            NONANTIALIASED_QUALITY as u32,
+            ANTIALIASED_QUALITY as u32,
             (DEFAULT_PITCH | (FF_DONTCARE << 4)) as u32,
             font_name.as_ptr(),
         );
