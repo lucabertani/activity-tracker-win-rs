@@ -1,6 +1,6 @@
 use sysinfo::{CpuRefreshKind, RefreshKind, System};
-use winreg::enums::HKEY_LOCAL_MACHINE;
 use winreg::RegKey;
+use winreg::enums::HKEY_LOCAL_MACHINE;
 
 use super::msr::MsrThermalMonitor;
 
@@ -29,11 +29,15 @@ const MIN_CONSECUTIVE_TICKS: u32 = 2;
 /// The check runs on the same refresh timer as the RAM percentage. As soon
 /// as a single core satisfies the condition (for two consecutive ticks), the
 /// whole CPU is reported as throttling.
+///
+/// When the driver path is active, `refresh()` also captures the average
+/// per-core temperature (bits 22:16 of the same MSR, no extra reads).
 pub struct CpuThrottleMonitor {
     system: System,
     core_max_mhz: Vec<u64>,
     consecutive_throttle_ticks: u32,
     msr: Option<MsrThermalMonitor>,
+    last_avg_temp_c: Option<f64>,
 }
 
 impl Default for CpuThrottleMonitor {
@@ -52,6 +56,7 @@ impl CpuThrottleMonitor {
             core_max_mhz: Vec::new(),
             consecutive_throttle_ticks: 0,
             msr: MsrThermalMonitor::open(),
+            last_avg_temp_c: None,
         }
     }
 
@@ -62,6 +67,7 @@ impl CpuThrottleMonitor {
 
     /// Refreshes per-core usage and frequency, and returns `true` when at
     /// least one core appears to be thermal-throttling.
+    /// Also updates the average core temperature (driver path only).
     pub fn refresh(&mut self) -> bool {
         // HWiNFO-style MSR path: authoritative when the driver is available.
         // Re-probe on every refresh so a driver installed while the app is
@@ -69,11 +75,13 @@ impl CpuThrottleMonitor {
         if self.msr.is_none() {
             self.msr = MsrThermalMonitor::open();
         }
-        let throttling = if let Some(msr) = &self.msr {
-            msr.refresh()
+        let (throttling, avg_temp) = if let Some(msr) = &self.msr {
+            let sample = msr.refresh();
+            (sample.throttling, sample.average_celsius())
         } else {
-            self.refresh_frequency_heuristic()
+            (self.refresh_frequency_heuristic(), None)
         };
+        self.last_avg_temp_c = avg_temp;
 
         if throttling {
             self.consecutive_throttle_ticks += 1;
@@ -81,6 +89,13 @@ impl CpuThrottleMonitor {
             self.consecutive_throttle_ticks = 0;
         }
         self.consecutive_throttle_ticks >= MIN_CONSECUTIVE_TICKS
+    }
+
+    /// Average core temperature in °C from the last `refresh()` call.
+    /// `None` when the WinRing0 driver is not available (the frequency
+    /// heuristic has no temperature source).
+    pub fn avg_temperature_celsius(&self) -> Option<f64> {
+        self.last_avg_temp_c
     }
 
     /// Frequency+load fallback used when the kernel driver is not installed.
@@ -130,10 +145,10 @@ fn rated_frequency_mhz() -> u64 {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     for index in 0..64u32 {
         let path = format!(r"HARDWARE\DESCRIPTION\System\CentralProcessor\{index}");
-        if let Ok(key) = hklm.open_subkey(&path) {
-            if let Ok(value) = key.get_value::<u32, _>("~MHz") {
-                return u64::from(value);
-            }
+        if let Ok(key) = hklm.open_subkey(&path)
+            && let Ok(value) = key.get_value::<u32, _>("~MHz")
+        {
+            return u64::from(value);
         }
     }
     0

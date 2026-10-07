@@ -30,7 +30,10 @@ fn open_device() -> Option<HANDLE> {
     };
     if handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
         let err = std::io::Error::last_os_error();
-        eprintln!("open {DEVICE} failed: {err} (code 0x{:08X})", err.raw_os_error().unwrap_or(0));
+        eprintln!(
+            "open {DEVICE} failed: {err} (code 0x{:08X})",
+            err.raw_os_error().unwrap_or(0)
+        );
         None
     } else {
         Some(handle)
@@ -93,17 +96,15 @@ fn main() {
             let Some(msr) = msr else { break }; // fewer than 64 cores -> stop
             let thermal = msr & 1 != 0;
             let prochot_log = (msr >> 1) & 1 != 0;
-            // DTS offset from TjMax: bits 16-22 (7-bit) or 16-23 (8-bit)
-            let offset7 = ((msr >> 16) & 0x7F) as i64;
-            let offset8 = ((msr >> 16) & 0xFF) as i64;
-            let temp7 = tjmax - offset7;
-            let temp8 = tjmax - offset8;
-            let temp = if (0..=130).contains(&temp7) { temp7 } else { temp8 };
+            // Modern Intel (Skylake+): bits 22:16 are the actual temperature in °C.
+            // A zero reading means the MSR is not implemented on that core.
+            let temp = ((msr >> 16) & 0x7F) as i64;
+            let temp = if temp == 0 { -1 } else { temp };
             if thermal {
                 any_throttle = true;
             }
             println!(
-                "core {core:2}: thermal_status={thermal} prochot_log={prochot_log} temp~={temp:3} C  msr=0x{msr:016X}"
+                "core {core:2}: thermal_status={thermal} prochot_log={prochot_log} temp={temp:3} C  msr=0x{msr:016X}"
             );
         }
         println!("any core thermally throttling: {any_throttle}");
