@@ -181,7 +181,8 @@ pub fn build_fallback_icon() -> windows_sys::Win32::UI::WindowsAndMessaging::HIC
 /// Draws `text` centered on a solid `bg` with `fg` text color and returns a
 /// small system icon (the shared renderer for both tray icons).
 /// `font_size` is the text height in pixels; 0 = automatic (fit to the
-/// icon size and digit count).
+/// icon size and digit count). Explicit sizes larger than the icon are
+/// clipped at the edges (the settings preview shows exactly that).
 pub fn build_text_icon(
     text: &str,
     bg: u32,
@@ -195,7 +196,7 @@ pub fn build_text_icon(
     let digits = text.chars().count() as i32;
 
     let font_height = if font_size != 0 {
-        (font_size as i32).max(6).min(height - 2)
+        (font_size as i32).max(6)
     } else {
         match digits {
             1 => (height - TRAY_FONT_OFFSET_1).max(TRAY_FONT_MIN_1),
