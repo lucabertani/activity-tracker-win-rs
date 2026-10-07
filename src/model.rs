@@ -11,6 +11,20 @@ pub struct ProcessInfo {
     pub memory_percent: f64,
 }
 
+/// One row of the process list: either a group header for one process
+/// name (totals over all its instances, with the expand/collapse state),
+/// or a single process, shown as a child row of its group.
+#[derive(Debug, Clone)]
+pub enum DisplayRow {
+    Group {
+        name: String,
+        total_bytes: u64,
+        count: u32,
+        expanded: bool,
+    },
+    Proc(ProcessInfo),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortColumn {
     Name,

@@ -1,5 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
+use std::collections::HashSet;
 use std::mem;
 
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -7,7 +8,9 @@ use windows_sys::Win32::Graphics::Gdi::{
     CreateSolidBrush, DeleteObject, HBRUSH, HDC, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::Controls::{LVIF_TEXT, LVN_GETDISPINFOW, NMLVDISPINFOW};
+use windows_sys::Win32::UI::Controls::{
+    LVIF_TEXT, LVN_GETDISPINFOW, LVN_ITEMACTIVATE, NMLISTVIEW, NMLVDISPINFOW,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, CREATESTRUCTW, DefWindowProcW, DestroyWindow, DispatchMessageW, EN_CHANGE,
     GWLP_USERDATA, GetCursorPos, GetDlgCtrlID, GetMessageW, KillTimer, MB_ICONERROR, MB_OK, MSG,
@@ -17,10 +20,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::error::{AppError, AppResult};
-use crate::model::{AppSettings, ProcessInfo, SortColumn, SortState};
+use crate::model::{AppSettings, DisplayRow, ProcessInfo, SortColumn, SortState};
 use crate::monitor::cpu::CpuThrottleMonitor;
 use crate::monitor::memory::total_memory_status;
-use crate::monitor::processes::{apply_filter_and_sort, snapshot_processes, terminate_process};
+use crate::monitor::processes::{build_display_rows, snapshot_processes, terminate_process};
 use crate::settings::store::load_settings;
 use crate::ui::menu::{CMD_EXIT_APP, CMD_OPEN_WINDOW, show_tray_context_menu};
 use crate::ui::settings_window::{open_settings, register_settings_window_class};
@@ -46,7 +49,10 @@ pub(crate) struct AppState {
     sort: SortState,
     search_query: String,
     all_processes: Vec<ProcessInfo>,
-    visible_processes: Vec<ProcessInfo>,
+    visible_rows: Vec<DisplayRow>,
+    // Lower-cased process names whose group the user has expanded.
+    expanded_groups: HashSet<String>,
+    total_ram_bytes: u64,
     pub(crate) current_ram_percent: u32,
     pub(crate) cpu_monitor: CpuThrottleMonitor,
     cpu_throttling: bool,
@@ -65,7 +71,9 @@ impl AppState {
             sort: SortState::default(),
             search_query: String::new(),
             all_processes: Vec::new(),
-            visible_processes: Vec::new(),
+            visible_rows: Vec::new(),
+            expanded_groups: HashSet::new(),
+            total_ram_bytes: 0,
             current_ram_percent: 0,
             cpu_monitor: CpuThrottleMonitor::new(),
             cpu_throttling: false,
@@ -170,19 +178,48 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_NOTIFY => {
             let nmhdr = lparam as *const windows_sys::Win32::UI::Controls::NMHDR;
-            if !nmhdr.is_null()
-                && (*nmhdr).idFrom as i32 == IDC_PROCESS_LIST
-                && (*nmhdr).code == LVN_GETDISPINFOW
-                && let Some(state) = get_state_mut(hwnd)
-            {
-                let info = lparam as *mut NMLVDISPINFOW;
-                if !info.is_null() {
-                    let item = &mut (*info).item;
-                    if item.mask & LVIF_TEXT != 0 {
-                        let text = process_cell_text(state, item.iItem, item.iSubItem);
-                        state.notify_text_buf = wide(&text);
-                        item.pszText = state.notify_text_buf.as_mut_ptr();
+            if !nmhdr.is_null() && (*nmhdr).idFrom as i32 == IDC_PROCESS_LIST {
+                match (*nmhdr).code {
+                    LVN_GETDISPINFOW => {
+                        if let Some(state) = get_state_mut(hwnd) {
+                            let info = lparam as *mut NMLVDISPINFOW;
+                            if !info.is_null() {
+                                let item = &mut (*info).item;
+                                if item.mask & LVIF_TEXT != 0 {
+                                    let text = process_cell_text(state, item.iItem, item.iSubItem);
+                                    state.notify_text_buf = wide(&text);
+                                    item.pszText = state.notify_text_buf.as_mut_ptr();
+                                }
+                            }
+                        }
                     }
+                    // Double-click a group row: expand/collapse its instances.
+                    LVN_ITEMACTIVATE => {
+                        let item = lparam as *const NMLISTVIEW;
+                        if !item.is_null()
+                            && let Some(state) = get_state_mut(hwnd)
+                        {
+                            let key =
+                                state
+                                    .visible_rows
+                                    .get((*item).iItem as usize)
+                                    .and_then(|row| match row {
+                                        DisplayRow::Group { name, .. } => {
+                                            Some(name.to_ascii_lowercase())
+                                        }
+                                        _ => None,
+                                    });
+                            if let Some(key) = key {
+                                // remove returns true if the group was expanded:
+                                // true -> collapse, false -> expand.
+                                if !state.expanded_groups.remove(&key) {
+                                    state.expanded_groups.insert(key);
+                                }
+                                rebuild_visible_and_render(hwnd, state);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             0
@@ -375,6 +412,7 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
 
     let total_ram_bytes = if let Some((ram_percent, total)) = ram_status {
         state.current_ram_percent = ram_percent;
+        state.total_ram_bytes = total;
 
         set_label_text(
             hwnd,
@@ -395,9 +433,13 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
 }
 
 fn rebuild_visible_and_render(hwnd: HWND, state: &mut AppState) {
-    state.visible_processes =
-        apply_filter_and_sort(&state.all_processes, &state.search_query, state.sort);
-    set_virtual_item_count(hwnd, state.visible_processes.len());
+    state.visible_rows = build_display_rows(
+        &state.all_processes,
+        &state.search_query,
+        state.sort,
+        &state.expanded_groups,
+    );
+    set_virtual_item_count(hwnd, state.visible_rows.len());
 }
 
 /// Rebuilds both tray icons from the current settings: each icon is added
@@ -521,16 +563,43 @@ fn process_cell_text(state: &AppState, row: i32, column: i32) -> String {
         return String::new();
     }
 
-    let Some(process) = state.visible_processes.get(row as usize) else {
+    let Some(display) = state.visible_rows.get(row as usize) else {
         return String::new();
     };
 
-    match column {
-        0 => process.name.clone(),
-        1 => process.pid.to_string(),
-        2 => format!("{:.2}", process.memory_mib),
-        3 => format!("{:.2}", process.memory_percent),
-        _ => String::new(),
+    match display {
+        DisplayRow::Group {
+            name,
+            total_bytes,
+            count,
+            expanded,
+        } => {
+            let total_mib = *total_bytes as f64 / 1024.0 / 1024.0;
+            let total_percent = if state.total_ram_bytes == 0 {
+                0.0
+            } else {
+                (*total_bytes as f64 / state.total_ram_bytes as f64) * 100.0
+            };
+            match column {
+                0 => format!(
+                    "{} {} ({}x)",
+                    if *expanded { "▼" } else { "►" },
+                    name,
+                    count
+                ),
+                1 => "-".to_string(),
+                2 => format!("{:.2}", total_mib),
+                3 => format!("{:.2}", total_percent),
+                _ => String::new(),
+            }
+        }
+        DisplayRow::Proc(process) => match column {
+            0 => format!("      {}", process.name),
+            1 => process.pid.to_string(),
+            2 => format!("{:.2}", process.memory_mib),
+            3 => format!("{:.2}", process.memory_percent),
+            _ => String::new(),
+        },
     }
 }
 
@@ -544,12 +613,31 @@ fn terminate_selected_process(hwnd: HWND) {
         return;
     };
 
-    let Some(proc_info) = state.visible_processes.get(row as usize).cloned() else {
+    let Some(display) = state.visible_rows.get(row as usize).cloned() else {
         show_error(hwnd, "Invalid process.");
         return;
     };
 
-    if proc_info.pid == std::process::id() {
+    // A group row terminates every instance of that process
+    // (like Task Manager's "End task group"); a child row just itself.
+    let pids: Vec<u32> = match display {
+        DisplayRow::Proc(process) => vec![process.pid],
+        DisplayRow::Group { name, .. } => {
+            let key = name.to_ascii_lowercase();
+            state
+                .all_processes
+                .iter()
+                .filter(|p| p.name.to_ascii_lowercase() == key)
+                .map(|p| p.pid)
+                .collect()
+        }
+    };
+    let pids: Vec<u32> = pids
+        .into_iter()
+        .filter(|pid| *pid != std::process::id())
+        .collect();
+
+    if pids.is_empty() {
         show_error(
             hwnd,
             "You cannot terminate the current application from here.",
@@ -557,14 +645,17 @@ fn terminate_selected_process(hwnd: HWND) {
         return;
     }
 
-    if let Err(err) = terminate_process(proc_info.pid) {
-        show_error(
-            hwnd,
-            &format!(
-                "Could not terminate process {} (PID {}): {}",
-                proc_info.name, proc_info.pid, err
-            ),
-        );
+    let mut first_error: Option<String> = None;
+    for pid in &pids {
+        if let Err(err) = terminate_process(*pid)
+            && first_error.is_none()
+        {
+            first_error = Some(format!("PID {pid}: {err}"));
+        }
+    }
+
+    if let Some(err) = first_error {
+        show_error(hwnd, &format!("Could not terminate some processes: {err}"));
         return;
     }
 

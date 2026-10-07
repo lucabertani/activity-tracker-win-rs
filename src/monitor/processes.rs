@@ -1,8 +1,8 @@
-use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 
-use crate::model::{ProcessInfo, SortColumn, SortDirection, SortState};
+use crate::model::{DisplayRow, ProcessInfo, SortColumn, SortDirection, SortState};
 use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
@@ -123,47 +123,70 @@ pub fn terminate_process(pid: u32) -> Result<(), String> {
     Ok(())
 }
 
-pub fn apply_filter_and_sort(
+/// Builds the process list rows: one group row per process name (totals
+/// over all its instances, with the expand/collapse state), followed by
+/// one child row per instance of the expanded groups.
+/// `expanded` holds the lower-cased names of the groups the user opened.
+///
+/// ponytail: O(n^2) group lookup; fine for the few hundred processes a
+/// Windows box runs. Switch to a HashMap if this ever shows up in a profile.
+pub fn build_display_rows(
     source: &[ProcessInfo],
     filter: &str,
     sort: SortState,
-) -> Vec<ProcessInfo> {
+    expanded: &HashSet<String>,
+) -> Vec<DisplayRow> {
     let needle = filter.to_ascii_lowercase();
 
-    let mut data: Vec<ProcessInfo> = source
-        .iter()
-        .filter(|p| {
-            if needle.is_empty() {
-                true
-            } else {
-                p.name.to_ascii_lowercase().contains(&needle)
+    // (lower-cased key, display name, total bytes, instances)
+    let mut groups: Vec<(String, String, u64, Vec<ProcessInfo>)> = Vec::new();
+    for process in source {
+        if !needle.is_empty() && !process.name.to_ascii_lowercase().contains(&needle) {
+            continue;
+        }
+        let key = process.name.to_ascii_lowercase();
+        match groups.iter_mut().find(|g| g.0 == key) {
+            Some(group) => {
+                group.2 += process.memory_bytes;
+                group.3.push(process.clone());
             }
-        })
-        .cloned()
-        .collect();
-
-    data.sort_by(|a, b| compare_process(a, b, sort));
-    data
-}
-
-fn compare_process(a: &ProcessInfo, b: &ProcessInfo, sort: SortState) -> Ordering {
-    let base = match sort.sort_column {
-        SortColumn::Name => a
-            .name
-            .to_ascii_lowercase()
-            .cmp(&b.name.to_ascii_lowercase())
-            .then(a.pid.cmp(&b.pid)),
-        SortColumn::Memory => a.memory_bytes.cmp(&b.memory_bytes).then(
-            a.name
-                .to_ascii_lowercase()
-                .cmp(&b.name.to_ascii_lowercase()),
-        ),
-    };
-
-    match sort.sort_direction {
-        SortDirection::Asc => base,
-        SortDirection::Desc => base.reverse(),
+            None => groups.push((
+                key,
+                process.name.clone(),
+                process.memory_bytes,
+                vec![process.clone()],
+            )),
+        }
     }
+
+    groups.sort_by(|a, b| {
+        let base = match sort.sort_column {
+            SortColumn::Name => a.0.cmp(&b.0),
+            SortColumn::Memory => a.2.cmp(&b.2).then(a.0.cmp(&b.0)),
+        };
+        match sort.sort_direction {
+            SortDirection::Asc => base,
+            SortDirection::Desc => base.reverse(),
+        }
+    });
+
+    let mut rows = Vec::with_capacity(groups.len() * 2);
+    for (key, name, total_bytes, procs) in groups {
+        let is_expanded = expanded.contains(&key);
+        rows.push(DisplayRow::Group {
+            name,
+            total_bytes,
+            count: procs.len() as u32,
+            expanded: is_expanded,
+        });
+        if is_expanded {
+            let mut procs = procs;
+            procs.sort_by_key(|a| std::cmp::Reverse(a.memory_bytes));
+            rows.extend(procs.into_iter().map(DisplayRow::Proc));
+        }
+    }
+
+    rows
 }
 
 #[cfg(test)]
@@ -180,36 +203,61 @@ mod tests {
         }
     }
 
-    #[test]
-    fn filter_is_case_insensitive() {
-        let source = vec![p(1, "Chrome.exe", 10), p(2, "notepad.exe", 20)];
-        let out = apply_filter_and_sort(
-            &source,
-            "CHRO",
-            SortState {
-                sort_column: SortColumn::Name,
-                sort_direction: SortDirection::Asc,
-            },
-        );
-
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].name, "Chrome.exe");
+    fn memory_desc() -> SortState {
+        SortState {
+            sort_column: SortColumn::Memory,
+            sort_direction: SortDirection::Desc,
+        }
     }
 
     #[test]
-    fn sort_memory_desc() {
-        let source = vec![p(1, "a", 100), p(2, "b", 300), p(3, "c", 200)];
-        let out = apply_filter_and_sort(
-            &source,
-            "",
-            SortState {
-                sort_column: SortColumn::Memory,
-                sort_direction: SortDirection::Desc,
-            },
-        );
+    fn groups_instances_and_sums_memory() {
+        let source = vec![
+            p(1, "firefox.exe", 100),
+            p(2, "firefox.exe", 200),
+            p(3, "notepad.exe", 50),
+        ];
+        let expanded = HashSet::from(["firefox.exe".to_ascii_lowercase()]);
+        let rows = build_display_rows(&source, "", memory_desc(), &expanded);
 
-        assert_eq!(out[0].memory_bytes, 300);
-        assert_eq!(out[1].memory_bytes, 200);
-        assert_eq!(out[2].memory_bytes, 100);
+        assert_eq!(rows.len(), 4);
+        match &rows[0] {
+            // firefox group first (300 > 50), expanded: group + 2 children
+            DisplayRow::Group {
+                name,
+                total_bytes,
+                count,
+                expanded,
+            } => {
+                assert_eq!(name, "firefox.exe");
+                assert_eq!(*total_bytes, 300);
+                assert_eq!(*count, 2);
+                assert!(*expanded);
+            }
+            _ => panic!("expected a group row first"),
+        }
+        match &rows[1] {
+            // children sorted by memory desc
+            DisplayRow::Proc(proc) => assert_eq!(proc.pid, 2),
+            _ => panic!("expected a child row"),
+        }
+        match &rows[3] {
+            DisplayRow::Group { name, expanded, .. } => {
+                assert_eq!(name, "notepad.exe");
+                assert!(!*expanded);
+            }
+            _ => panic!("expected a collapsed group row"),
+        }
+    }
+
+    #[test]
+    fn filter_hides_non_matching_groups() {
+        let source = vec![p(1, "chrome.exe", 10), p(2, "firefox.exe", 20)];
+        let rows = build_display_rows(&source, "CHROME", memory_desc(), &HashSet::new());
+        assert_eq!(rows.len(), 1);
+        match &rows[0] {
+            DisplayRow::Group { name, .. } => assert_eq!(name, "chrome.exe"),
+            _ => panic!("expected a group row"),
+        }
     }
 }
