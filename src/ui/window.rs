@@ -92,7 +92,7 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
             20,
             IDC_HEADER_RAM,
         );
-        // Average per-core temperature; "n/a" while the WinRing0 driver is missing.
+        // Average per-core temperature; "n/a" while the PawnIO driver is missing.
         create_label(
             hwnd,
             hinstance,

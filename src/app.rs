@@ -471,7 +471,7 @@ pub(crate) fn refresh_tray_icons(hwnd: HWND, state: &mut AppState) {
         .map(|t| t as u32);
     let cpu_tip = match temp {
         Some(t) => format!("CPU avg {t} C"),
-        None => "CPU avg: n/a (WinRing0 driver missing)".to_string(),
+        None => "CPU avg: n/a (PawnIO driver missing)".to_string(),
     };
     apply_tray_icon(
         hwnd,

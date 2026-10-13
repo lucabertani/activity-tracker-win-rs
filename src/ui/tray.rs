@@ -172,7 +172,7 @@ pub fn build_ram_icon(
 }
 
 /// CPU tray icon: average temperature (e.g. `62`), or `--` when no
-/// temperature source is available (WinRing0 driver missing).
+/// temperature source is available (PawnIO driver missing).
 /// `font_size` 0 = automatic.
 pub fn build_cpu_icon(
     temp_celsius: Option<u32>,

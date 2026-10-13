@@ -1,12 +1,15 @@
-//! HWiNFO-style per-core thermal throttling + temperature via the WinRing0
-//! kernel driver (MSR `IA32_THERM_STATUS`, 0x19C). Bit 0 is the thermal
-//! status flag; bits 22:16 are the digital thermal sensor readout on modern
-//! Intel (Skylake and later, incl. Core Ultra — same layout HWiNFO and
-//! LibreHardwareMonitor read): the offset *below* TjMax, so the absolute
-//! temperature is `TjMax - readout`, with TjMax from `IA32_TEMPERATURE_TARGET`.
-//! The driver must be installed once as
-//! administrator (`driver/install-driver.ps1`); after that the device is
-//! readable from a normal user process.
+//! HWiNFO-style per-core thermal throttling + temperature via the PawnIO
+//! kernel driver (namazso) with the signed `IntelMSR` module (MSR
+//! `IA32_THERM_STATUS`, 0x19C). Bit 0 is the thermal status flag; bits 22:16
+//! are the digital thermal sensor readout on modern Intel (Skylake and later,
+//! incl. Core Ultra — same layout HWiNFO and LibreHardwareMonitor read): the
+//! offset *below* TjMax, so the absolute temperature is `TjMax - readout`,
+//! with TjMax from `IA32_TEMPERATURE_TARGET`.
+//! PawnIO must be installed once as administrator (see `driver/README.md`).
+//! Its device grants access only to SYSTEM and Administrators (the INF sets
+//! `D:P(A;;GA;;;SY)(A;;GA;;;BA)`), so the app runs elevated — its embedded
+//! manifest requests administrator privileges. Only the module whitelist is
+//! exposed (here: two read-only MSRs), not raw MSR/memory.
 
 use std::mem;
 use std::ptr;
@@ -15,10 +18,22 @@ use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadAffinityMask};
 
-/// `CTL_CODE(40000, 0x821, METHOD_BUFFERED, FILE_ANY_ACCESS)` — WinRing0
-/// `IOCTL_OLS_READ_MSR`: input = MSR index (u32), output = value (u64).
-const IOCTL_OLS_READ_MSR: u32 = (40000 << 16) | (0x821 << 2);
-const DEVICE_NAME: &str = r"\\.\WinRing0_1_2_0";
+/// PawnIO device object (`\Device\PawnIO`).
+const DEVICE_NAME: &str = r"\\?\GLOBALROOT\Device\PawnIO";
+const DEVICE_TYPE: u32 = 41394 << 16;
+/// `CTL_CODE(41394, 0x821, METHOD_BUFFERED, FILE_ANY_ACCESS)` — PawnIO
+/// `IOCTL_PIO_LOAD_BINARY`: input = module binary.
+const IOCTL_PIO_LOAD_BINARY: u32 = DEVICE_TYPE | (0x821 << 2);
+/// `CTL_CODE(41394, 0x841, METHOD_BUFFERED, FILE_ANY_ACCESS)` — PawnIO
+/// `IOCTL_PIO_EXECUTE_FN`: input = function name (32-byte ASCII) + i64 args,
+/// output = i64 results.
+const IOCTL_PIO_EXECUTE_FN: u32 = DEVICE_TYPE | (0x841 << 2);
+/// Execute input starts with the zero-padded ASCII function name.
+const FN_NAME_LENGTH: usize = 32;
+/// Compiled + signed `IntelMSR` module (LGPL-2.1, namazso/PawnIO.Modules
+/// 0.2.11): exposes only a whitelist of MSR reads/writes, incl. the two
+/// read-only MSRs used here (`0x19C`, `0x1A2`).
+const INTELMSR_MODULE: &[u8] = include_bytes!("../../driver/pawnio/IntelMSR.bin");
 const MSR_IA32_THERM_STATUS: u32 = 0x19C;
 /// `IA32_TEMPERATURE_TARGET` (0x1A2): bits 23:16 hold the TCC activation
 /// temperature (TjMax), the reference point the digital readout is relative to.
@@ -60,8 +75,9 @@ pub struct MsrThermalMonitor {
 unsafe impl Send for MsrThermalMonitor {}
 
 impl MsrThermalMonitor {
-    /// Opens the WinRing0 device. Returns `None` when the driver is not
-    /// installed (the caller then falls back to the frequency heuristic).
+    /// Opens the PawnIO device and loads the `IntelMSR` module. Returns
+    /// `None` when PawnIO is not installed (the caller then falls back to
+    /// the frequency heuristic).
     pub fn open() -> Option<Self> {
         let wide: Vec<u16> = DEVICE_NAME
             .encode_utf16()
@@ -71,7 +87,7 @@ impl MsrThermalMonitor {
             windows_sys::Win32::Storage::FileSystem::CreateFileW(
                 wide.as_ptr(),
                 0xC0000000, // GENERIC_READ | GENERIC_WRITE
-                0,
+                3,          // FILE_SHARE_READ | FILE_SHARE_WRITE
                 ptr::null_mut(),
                 3, // OPEN_EXISTING
                 0,
@@ -79,6 +95,28 @@ impl MsrThermalMonitor {
             )
         };
         if handle == INVALID_HANDLE_VALUE {
+            return None;
+        }
+
+        // On AMD CPUs (or with an unsigned module) the load fails and the
+        // temperature path is disabled, same as a missing driver.
+        let mut returned: u32 = 0;
+        let loaded = unsafe {
+            DeviceIoControl(
+                handle,
+                IOCTL_PIO_LOAD_BINARY,
+                INTELMSR_MODULE.as_ptr() as *const _,
+                INTELMSR_MODULE.len() as u32,
+                ptr::null_mut(),
+                0,
+                &mut returned,
+                ptr::null_mut(),
+            )
+        };
+        if loaded == 0 {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
             return None;
         }
 
@@ -125,26 +163,44 @@ impl MsrThermalMonitor {
     }
 
     fn read_msr(handle: HANDLE, index: u32) -> Option<u64> {
-        let mut value: u64 = 0;
+        let input = execute_input("ioctl_read_msr", &[index as i64]);
+        let mut value: i64 = 0;
         let mut returned: u32 = 0;
         let ok = unsafe {
             DeviceIoControl(
                 handle,
-                IOCTL_OLS_READ_MSR,
-                &index as *const u32 as *const _,
-                mem::size_of::<u32>() as u32,
-                &mut value as *mut u64 as *mut _,
-                mem::size_of::<u64>() as u32,
+                IOCTL_PIO_EXECUTE_FN,
+                input.as_ptr() as *const _,
+                input.len() as u32,
+                &mut value as *mut i64 as *mut _,
+                mem::size_of::<i64>() as u32,
                 &mut returned,
                 ptr::null_mut(),
             )
         };
-        if ok != 0 && returned == mem::size_of::<u64>() as u32 {
-            Some(value)
+        if ok != 0 && returned == mem::size_of::<i64>() as u32 {
+            Some(value as u64)
         } else {
             None
         }
     }
+}
+
+/// Frames a PawnIO `Execute` call: 32-byte zero-padded ASCII function name,
+/// then the arguments as little-endian i64 values.
+fn execute_input(name: &str, args: &[i64]) -> Vec<u8> {
+    let mut input = vec![0u8; FN_NAME_LENGTH + mem::size_of_val(args)];
+    let n = name.len().min(FN_NAME_LENGTH - 1);
+    input[..n].copy_from_slice(&name.as_bytes()[..n]);
+    for (slot, arg) in input[FN_NAME_LENGTH..]
+        .as_chunks_mut::<8>()
+        .0
+        .iter_mut()
+        .zip(args)
+    {
+        slot.copy_from_slice(&arg.to_le_bytes());
+    }
+    input
 }
 
 /// Decodes TjMax (TCC activation temperature) from `IA32_TEMPERATURE_TARGET`.
@@ -177,7 +233,16 @@ impl Drop for MsrThermalMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::{MsrThermalSample, temperature_celsius, tjmax_celsius};
+    use super::{MsrThermalSample, execute_input, temperature_celsius, tjmax_celsius};
+
+    #[test]
+    fn execute_input_frames_name_and_args() {
+        let buf = execute_input("ioctl_read_msr", &[0x19C]);
+        assert_eq!(buf.len(), 32 + 8);
+        assert_eq!(&buf[..14], b"ioctl_read_msr");
+        assert_eq!(buf[15], 0); // zero-padded name field
+        assert_eq!(&buf[32..], &0x19Ci64.to_le_bytes());
+    }
 
     #[test]
     fn decodes_readout_as_offset_below_tjmax() {

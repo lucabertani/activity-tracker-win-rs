@@ -6,7 +6,8 @@ throttling (HWiNFO-style) from the system tray.
 > **Don't want to compile?** Grab the prebuilt executable from the
 > [latest release](https://github.com/lucabertani/activity-tracker-win-rs/releases/latest)
 > (`activity-tracker-win-rs.exe`, self-contained, no VC++ redistributable needed).
-> The driver for real temperatures is bundled in the release as well — see
+> Real temperatures need the free [PawnIO](https://pawnio.eu) driver, installed
+> separately — see
 > [below](#cpu-temperature-and-thermal-throttling-driver).
 
 ## Requirements
@@ -26,7 +27,9 @@ Resulting executable: `target\release\activity-tracker-win-rs.exe`
 
 ## Run
 
-1. Double-click `target\release\activity-tracker-win-rs.exe`.
+1. Double-click `target\release\activity-tracker-win-rs.exe` and confirm the
+   UAC dialog: the app always runs as administrator (the temperature driver
+   allows access to administrators only).
 2. The main window opens. If you don't see it: look for the icon in the
    tray (the `^` arrow next to the clock) and double-click it.
 3. From a terminal: `target\release\activity-tracker-win-rs.exe`
@@ -34,27 +37,22 @@ Resulting executable: `target\release\activity-tracker-win-rs.exe`
 
 ## CPU temperature and thermal throttling (driver)
 
-The driver (bundled in this repo under [`driver/`](driver/) and in the
-[latest release](https://github.com/lucabertani/activity-tracker-win-rs/releases/latest))
-enables real per-core MSR reads. **Install it once** (admin/UAC required):
+Real per-core MSR reads go through the **PawnIO** driver (signed and actively
+maintained; the bundled module exposes only two read-only MSRs — see
+[`driver/README.md`](driver/README.md) for why the old WinRing0 driver was
+dropped). **Install it once** (admin/UAC required):
 
-1. Open PowerShell as administrator.
-2. Run (from the project folder or the release folder):
+1. Download the **Official edition** installer from <https://pawnio.eu> and
+   run it as administrator.
+2. Verify it is installed:
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\driver\install-driver.ps1
+   Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO
    ```
-3. Verify the state is RUNNING:
-   ```powershell
-   sc.exe query WinRing0_1_2_0
-   ```
-4. The driver loads by itself at every Windows boot (`start= system`):
-   **no admin needed afterwards**, neither at boot nor for the app.
+3. The driver loads by itself when the app opens it; the app itself always
+   runs elevated (its embedded manifest requests administrator privileges,
+   required by the driver — see below).
 
-To uninstall the driver (again from an admin PowerShell):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\driver\install-driver.ps1 -Uninstall
-```
+To uninstall, use "Apps and features" (PawnIO entry) or the installer.
 
 See [`driver/README.md`](driver/README.md) for details.
 
@@ -62,7 +60,8 @@ Without the driver, the app falls back to a frequency+load heuristic and
 cannot read temperatures (the "CPU avg" label shows `n/a`). With the driver,
 it reads the real per-core MSR flag (`IA32_THERM_STATUS`) exactly like HWiNFO
 — a single throttled core is enough to show the red warning — and reports the
-average core temperature from the same register (no extra reads).
+average core temperature derived from it (`TjMax` minus the digital readout,
+with `TjMax` read from `IA32_TEMPERATURE_TARGET`).
 
 ## Tests and diagnostics
 
@@ -78,7 +77,9 @@ cargo run --example cpu_probe       # per-core frequencies/usage + throttle verd
   (`cargo build` fails with "Access is denied").
 - Autostart: tick "Start automatically with Windows" and "Start in
   background" in the app window. A manual double-click always shows the
-  window; only the autostart launch starts hidden.
-- Security: the WinRing0 driver lets any local user read/write CPU MSRs
-  (like HWiNFO/CrystalDiskInfo). Fine on a personal single-user machine;
-  see `driver/README.md`.
+  window; only the autostart launch starts hidden. The UAC dialog appears at
+  every logon too: without confirming it the app (and its tray icon) does not
+  start.
+- Security: the old WinRing0 driver (CVE-2020-14979, any local process could
+  read/write MSRs and memory) has been replaced by the signed PawnIO driver,
+  which exposes only whitelisted read-only MSR access; see `driver/README.md`.

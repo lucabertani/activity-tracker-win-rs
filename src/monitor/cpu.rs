@@ -21,7 +21,7 @@ const MIN_CONSECUTIVE_TICKS: u32 = 2;
 
 /// Monitors CPU cores for thermal throttling.
 ///
-/// Primary signal (HWiNFO-style, when the WinRing0 kernel driver is
+/// Primary signal (HWiNFO-style, when the PawnIO kernel driver is
 /// installed): per-core MSR `IA32_THERM_STATUS` bit 0 — the exact flag
 /// HWiNFO reads. Falls back to a frequency+load heuristic when the driver
 /// is not available (no admin rights / not installed).
@@ -31,7 +31,8 @@ const MIN_CONSECUTIVE_TICKS: u32 = 2;
 /// whole CPU is reported as throttling.
 ///
 /// When the driver path is active, `refresh()` also captures the average
-/// per-core temperature (bits 22:16 of the same MSR, no extra reads).
+/// per-core temperature (bits 22:16 of the same MSR converted with TjMax from
+/// `IA32_TEMPERATURE_TARGET`).
 pub struct CpuThrottleMonitor {
     system: System,
     core_max_mhz: Vec<u64>,
@@ -92,7 +93,7 @@ impl CpuThrottleMonitor {
     }
 
     /// Average core temperature in °C from the last `refresh()` call.
-    /// `None` when the WinRing0 driver is not available (the frequency
+    /// `None` when the PawnIO driver is not available (the frequency
     /// heuristic has no temperature source).
     pub fn avg_temperature_celsius(&self) -> Option<f64> {
         self.last_avg_temp_c
