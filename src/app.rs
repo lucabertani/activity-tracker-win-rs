@@ -26,6 +26,7 @@ use crate::monitor::cpu::CpuThrottleMonitor;
 use crate::monitor::memory::total_memory_status;
 use crate::monitor::msr::{MsrThermalMonitor, OpenError};
 use crate::monitor::processes::{build_display_rows, snapshot_processes, terminate_process};
+use crate::settings::autostart::set_autostart;
 use crate::settings::store::load_settings;
 use crate::ui::menu::{CMD_EXIT_APP, CMD_OPEN_WINDOW, show_tray_context_menu};
 use crate::ui::settings_window::{open_settings, register_settings_window_class};
@@ -144,6 +145,15 @@ pub fn run() -> AppResult<()> {
 
     let mut settings = load_settings().unwrap_or_else(|_| AppSettings::default());
     settings = settings.normalized();
+
+    // Best-effort autostart re-sync: keeps the registered exe path fresh and
+    // migrates the legacy Run-key entry to the elevated logon task. A
+    // non-elevated start just keeps the existing registration.
+    if settings.start_on_windows
+        && let Ok(exe) = std::env::current_exe()
+    {
+        let _ = set_autostart(true, settings.start_in_background, &exe);
+    }
 
     let start_in_background_from_cli =
         std::env::args().any(|a| a.eq_ignore_ascii_case("--background"));

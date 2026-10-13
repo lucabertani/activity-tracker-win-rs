@@ -77,10 +77,10 @@ cargo run --example cpu_probe       # per-core frequencies/usage + throttle verd
 - Close the app before rebuilding: Windows locks the running exe
   (`cargo build` fails with "Access is denied").
 - Autostart: tick "Start automatically with Windows" and "Start in
-  background" in the app window. A manual double-click always shows the
-  window; only the autostart launch starts hidden. The UAC dialog appears at
-  every logon too (the app restarts itself elevated for the temperature
-  driver); decline it and the app starts without CPU temperatures.
+  background" in the app window. It registers a Task Scheduler logon task
+  ("Run with highest privileges"): the app starts elevated at every logon
+  with no UAC prompt, so temperatures work right away. A manual double-click
+  always shows the window; only the autostart launch starts hidden.
 - Security: the old WinRing0 driver (CVE-2020-14979, any local process could
   read/write MSRs and memory) has been replaced by the signed PawnIO driver,
   which exposes only whitelisted read-only MSR access; see `driver/README.md`.
