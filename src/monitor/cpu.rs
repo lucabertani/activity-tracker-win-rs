@@ -56,7 +56,7 @@ impl CpuThrottleMonitor {
             ),
             core_max_mhz: Vec::new(),
             consecutive_throttle_ticks: 0,
-            msr: MsrThermalMonitor::open(),
+            msr: MsrThermalMonitor::open().ok(),
             last_avg_temp_c: None,
         }
     }
@@ -74,7 +74,7 @@ impl CpuThrottleMonitor {
         // Re-probe on every refresh so a driver installed while the app is
         // running gets picked up (opening a missing device is cheap).
         if self.msr.is_none() {
-            self.msr = MsrThermalMonitor::open();
+            self.msr = MsrThermalMonitor::open().ok();
         }
         let (throttling, avg_temp) = if let Some(msr) = &self.msr {
             let sample = msr.refresh();

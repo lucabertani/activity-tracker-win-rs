@@ -27,9 +27,10 @@ Resulting executable: `target\release\activity-tracker-win-rs.exe`
 
 ## Run
 
-1. Double-click `target\release\activity-tracker-win-rs.exe` and confirm the
-   UAC dialog: the app always runs as administrator (the temperature driver
-   allows access to administrators only).
+1. Double-click `target\release\activity-tracker-win-rs.exe`. If the
+   temperature driver (PawnIO) is installed, the app restarts itself
+   elevated: confirm the UAC dialog to get CPU temperatures, or decline to
+   run without them.
 2. The main window opens. If you don't see it: look for the icon in the
    tray (the `^` arrow next to the clock) and double-click it.
 3. From a terminal: `target\release\activity-tracker-win-rs.exe`
@@ -48,9 +49,9 @@ dropped). **Install it once** (admin/UAC required):
    ```powershell
    Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO
    ```
-3. The driver loads by itself when the app opens it; the app itself always
-   runs elevated (its embedded manifest requests administrator privileges,
-   required by the driver — see below).
+3. The driver loads by itself when the app opens it. It is admin-only, so
+   the app automatically restarts itself elevated (UAC) when it finds the
+   driver — see below.
 
 To uninstall, use "Apps and features" (PawnIO entry) or the installer.
 
@@ -78,8 +79,8 @@ cargo run --example cpu_probe       # per-core frequencies/usage + throttle verd
 - Autostart: tick "Start automatically with Windows" and "Start in
   background" in the app window. A manual double-click always shows the
   window; only the autostart launch starts hidden. The UAC dialog appears at
-  every logon too: without confirming it the app (and its tray icon) does not
-  start.
+  every logon too (the app restarts itself elevated for the temperature
+  driver); decline it and the app starts without CPU temperatures.
 - Security: the old WinRing0 driver (CVE-2020-14979, any local process could
   read/write MSRs and memory) has been replaced by the signed PawnIO driver,
   which exposes only whitelisted read-only MSR access; see `driver/README.md`.

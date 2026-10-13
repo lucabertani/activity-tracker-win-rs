@@ -52,10 +52,11 @@ Module provenance (verify before trusting the binary):
 
 The PawnIO device ACL grants access only to SYSTEM and the built-in
 Administrators group (its INF sets `D:P(A;;GA;;;SY)(A;;GA;;;BA)`). That is the
-secure design this project switched for, and it means the app must run
-elevated: its embedded manifest (see `build.rs`) requests administrator
-privileges at every start. Without elevation the app starts fine but shows
-`n/a` for the CPU temperature.
+secure design this project switched for. The app manifest is `asInvoker`, so
+`cargo run` and double-clicks work normally; at startup, when the device is
+present but denies access, the app relaunches itself elevated (UAC) and the
+elevated copy takes over. Decline the prompt to run without CPU temperatures
+(the label shows `n/a`).
 
 Uninstall from "Apps and features" (PawnIO entry) or via the installer.
 

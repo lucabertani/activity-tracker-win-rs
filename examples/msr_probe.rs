@@ -2,14 +2,23 @@
 // Requires PawnIO installed once as administrator (see driver/README.md).
 use std::time::Duration;
 
-use activity_tracker_win_rs::monitor::msr::MsrThermalMonitor;
+use activity_tracker_win_rs::monitor::msr::{MsrThermalMonitor, OpenError};
 
 fn main() {
-    let Some(monitor) = MsrThermalMonitor::open() else {
-        eprintln!(
-            "PawnIO not available; install it from https://pawnio.eu first (see driver/README.md)"
-        );
-        return;
+    let monitor = match MsrThermalMonitor::open() {
+        Ok(monitor) => monitor,
+        Err(OpenError::AccessDenied) => {
+            eprintln!(
+                "access denied: the PawnIO device is admin-only, run this probe as administrator"
+            );
+            return;
+        }
+        Err(OpenError::Missing) => {
+            eprintln!(
+                "PawnIO not available; install it from https://pawnio.eu first (see driver/README.md)"
+            );
+            return;
+        }
     };
 
     for sample in 0..6 {

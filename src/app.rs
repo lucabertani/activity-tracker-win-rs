@@ -11,11 +11,12 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::{
     LVIF_TEXT, LVN_GETDISPINFOW, LVN_ITEMACTIVATE, NMLISTVIEW, NMLVDISPINFOW,
 };
+use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, CREATESTRUCTW, DefWindowProcW, DestroyWindow, DispatchMessageW, EN_CHANGE,
     GWLP_USERDATA, GetCursorPos, GetDlgCtrlID, GetMessageW, KillTimer, MB_ICONERROR, MB_OK, MSG,
-    MessageBoxW, PostQuitMessage, SetTimer, SetWindowLongPtrW, TranslateMessage, WM_CLOSE,
-    WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NOTIFY,
+    MessageBoxW, PostQuitMessage, SW_SHOWNORMAL, SetTimer, SetWindowLongPtrW, TranslateMessage,
+    WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NOTIFY,
     WM_RBUTTONUP, WM_SIZE, WM_TIMER,
 };
 
@@ -23,6 +24,7 @@ use crate::error::{AppError, AppResult};
 use crate::model::{AppSettings, DisplayRow, ProcessInfo, SortColumn, SortState};
 use crate::monitor::cpu::CpuThrottleMonitor;
 use crate::monitor::memory::total_memory_status;
+use crate::monitor::msr::{MsrThermalMonitor, OpenError};
 use crate::monitor::processes::{build_display_rows, snapshot_processes, terminate_process};
 use crate::settings::store::load_settings;
 use crate::ui::menu::{CMD_EXIT_APP, CMD_OPEN_WINDOW, show_tray_context_menu};
@@ -89,7 +91,57 @@ impl AppState {
     }
 }
 
+/// The PawnIO temperature device allows administrators only: relaunch this
+/// exe elevated (`runas`) and let the copy take over. Returns only when
+/// elevation is not possible (UAC declined): the app then runs without
+/// CPU temperatures.
+fn relaunch_elevated() {
+    use std::os::windows::ffi::OsStrExt;
+
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let file: Vec<u16> = exe
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let params: String = std::env::args()
+        .skip(1)
+        .map(|arg| {
+            if arg.contains([' ', '"']) {
+                format!("\"{}\"", arg.replace('"', "\\\""))
+            } else {
+                arg
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let params = wide(&params);
+
+    let launched = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            wide("runas").as_ptr(),
+            file.as_ptr(),
+            params.as_ptr(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if launched as isize > 32 {
+        // The elevated copy owns the window and tray icons from here on.
+        std::process::exit(0);
+    }
+}
+
 pub fn run() -> AppResult<()> {
+    // The PawnIO device is admin-only: when it exists but denies this
+    // process, take over with an elevated copy (UAC prompt).
+    if let Err(OpenError::AccessDenied) = MsrThermalMonitor::open() {
+        relaunch_elevated();
+    }
+
     let mut settings = load_settings().unwrap_or_else(|_| AppSettings::default());
     settings = settings.normalized();
 

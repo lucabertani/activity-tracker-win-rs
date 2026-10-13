@@ -7,9 +7,9 @@
 //! with TjMax from `IA32_TEMPERATURE_TARGET`.
 //! PawnIO must be installed once as administrator (see `driver/README.md`).
 //! Its device grants access only to SYSTEM and Administrators (the INF sets
-//! `D:P(A;;GA;;;SY)(A;;GA;;;BA)`), so the app runs elevated — its embedded
-//! manifest requests administrator privileges. Only the module whitelist is
-//! exposed (here: two read-only MSRs), not raw MSR/memory.
+//! `D:P(A;;GA;;;SY)(A;;GA;;;BA)`), so the app relaunches itself elevated when
+//! access is denied. Only the module whitelist is exposed (here: two
+//! read-only MSRs), not raw MSR/memory.
 
 use std::mem;
 use std::ptr;
@@ -43,6 +43,27 @@ const MSR_IA32_TEMPERATURE_TARGET: u32 = 0x1A2;
 const THERM_STATUS_THERMAL: u64 = 1;
 /// TjMax assumed when `IA32_TEMPERATURE_TARGET` is unreadable (Intel default).
 const DEFAULT_TJMAX_C: u16 = 100;
+/// Win32 `ERROR_ACCESS_DENIED`: the device exists but denies this process.
+const ERROR_ACCESS_DENIED: i32 = 5;
+
+/// Why the thermal monitor is unavailable.
+#[derive(Debug, PartialEq, Eq)]
+pub enum OpenError {
+    /// PawnIO is not installed, or the `IntelMSR` module cannot load (non-Intel
+    /// CPU, unsigned module): fall back to the frequency heuristic.
+    Missing,
+    /// The device is present but denies this process (admin-only ACL): the app
+    /// can relaunch itself elevated.
+    AccessDenied,
+}
+
+fn open_error(os_error: i32) -> OpenError {
+    if os_error == ERROR_ACCESS_DENIED {
+        OpenError::AccessDenied
+    } else {
+        OpenError::Missing
+    }
+}
 
 /// One thermal sample across all logical processors.
 pub struct MsrThermalSample {
@@ -75,10 +96,12 @@ pub struct MsrThermalMonitor {
 unsafe impl Send for MsrThermalMonitor {}
 
 impl MsrThermalMonitor {
-    /// Opens the PawnIO device and loads the `IntelMSR` module. Returns
-    /// `None` when PawnIO is not installed (the caller then falls back to
-    /// the frequency heuristic).
-    pub fn open() -> Option<Self> {
+    /// Opens the PawnIO device and loads the `IntelMSR` module. Fails with
+    /// [`OpenError::Missing`] when PawnIO is not available (the caller then
+    /// falls back to the frequency heuristic) and with
+    /// [`OpenError::AccessDenied`] when the admin-only device denies this
+    /// process.
+    pub fn open() -> Result<Self, OpenError> {
         let wide: Vec<u16> = DEVICE_NAME
             .encode_utf16()
             .chain(std::iter::once(0))
@@ -95,7 +118,10 @@ impl MsrThermalMonitor {
             )
         };
         if handle == INVALID_HANDLE_VALUE {
-            return None;
+            let os_error = std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or_default();
+            return Err(open_error(os_error));
         }
 
         // On AMD CPUs (or with an unsigned module) the load fails and the
@@ -117,7 +143,7 @@ impl MsrThermalMonitor {
             unsafe {
                 let _ = CloseHandle(handle);
             }
-            return None;
+            return Err(OpenError::Missing);
         }
 
         let mut sys_info = windows_sys::Win32::System::SystemInformation::SYSTEM_INFO::default();
@@ -126,7 +152,7 @@ impl MsrThermalMonitor {
         }
         let core_count = sys_info.dwNumberOfProcessors as usize;
 
-        Some(Self { handle, core_count })
+        Ok(Self { handle, core_count })
     }
 
     /// Samples every core: throttle flags + per-core temperature in °C.
@@ -233,7 +259,16 @@ impl Drop for MsrThermalMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::{MsrThermalSample, execute_input, temperature_celsius, tjmax_celsius};
+    use super::{
+        MsrThermalSample, OpenError, execute_input, open_error, temperature_celsius, tjmax_celsius,
+    };
+
+    #[test]
+    fn access_denied_is_distinguished_from_a_missing_driver() {
+        assert_eq!(open_error(5), OpenError::AccessDenied);
+        assert_eq!(open_error(2), OpenError::Missing);
+        assert_eq!(open_error(0), OpenError::Missing);
+    }
 
     #[test]
     fn execute_input_frames_name_and_args() {
