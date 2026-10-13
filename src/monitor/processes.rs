@@ -249,8 +249,11 @@ pub fn terminate_process(pid: u32) -> Result<(), String> {
 
 /// Builds the process list rows: one group row per process name (totals
 /// over all its instances, with the expand/collapse state), followed by
-/// one child row per instance of the expanded groups.
+/// one child row per instance of the expanded groups, and a final summary
+/// row with the memory that belongs to no process.
 /// `expanded` holds the lower-cased names of the groups the user opened.
+/// `ram_in_use_bytes` is the system-wide resident memory (kernel, drivers and
+/// shared pages included), used for that closing row.
 ///
 /// ponytail: O(n^2) group lookup; fine for the few hundred processes a
 /// Windows box runs. Switch to a HashMap if this ever shows up in a profile.
@@ -259,6 +262,7 @@ pub fn build_display_rows(
     filter: &str,
     sort: SortState,
     expanded: &HashSet<String>,
+    ram_in_use_bytes: u64,
 ) -> Vec<DisplayRow> {
     let needle = filter.to_ascii_lowercase();
 
@@ -310,6 +314,18 @@ pub fn build_display_rows(
         }
     }
 
+    // Closing row: everything resident that no process owns (kernel, drivers,
+    // pages shared between processes). Without it the rows visibly stop short
+    // of the header total, which is measured system-wide. Summed over `source`
+    // and not over the filtered groups: the row is a system total, not a
+    // process, so the search box does not narrow it.
+    if ram_in_use_bytes > 0 {
+        let listed: u64 = source.iter().map(|process| process.memory_bytes).sum();
+        rows.push(DisplayRow::System {
+            bytes: ram_in_use_bytes.saturating_sub(listed),
+        });
+    }
+
     rows
 }
 
@@ -342,7 +358,8 @@ mod tests {
             p(3, "notepad.exe", 50),
         ];
         let expanded = HashSet::from(["firefox.exe".to_ascii_lowercase()]);
-        let rows = build_display_rows(&source, "", memory_desc(), &expanded);
+        // 0 = no system summary row, this test is about the grouping.
+        let rows = build_display_rows(&source, "", memory_desc(), &expanded, 0);
 
         assert_eq!(rows.len(), 4);
         match &rows[0] {
@@ -377,11 +394,35 @@ mod tests {
     #[test]
     fn filter_hides_non_matching_groups() {
         let source = vec![p(1, "chrome.exe", 10), p(2, "firefox.exe", 20)];
-        let rows = build_display_rows(&source, "CHROME", memory_desc(), &HashSet::new());
+        let rows = build_display_rows(&source, "CHROME", memory_desc(), &HashSet::new(), 0);
         assert_eq!(rows.len(), 1);
         match &rows[0] {
             DisplayRow::Group { name, .. } => assert_eq!(name, "chrome.exe"),
             _ => panic!("expected a group row"),
+        }
+    }
+
+    #[test]
+    fn system_row_closes_the_gap_to_the_header_total() {
+        let source = vec![p(1, "firefox.exe", 100), p(2, "notepad.exe", 50)];
+        // 350 MB resident, 150 MB listed -> 200 MB owned by kernel/drivers.
+        let rows = build_display_rows(&source, "", memory_desc(), &HashSet::new(), 350);
+        assert_eq!(rows.len(), 3);
+        match rows.last().unwrap() {
+            DisplayRow::System { bytes } => assert_eq!(*bytes, 200),
+            other => panic!("expected the system row last, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn system_row_never_underflows() {
+        // The memory status is sampled separately from the process list, so the
+        // listed total can come out slightly larger than the system one.
+        let source = vec![p(1, "firefox.exe", 500)];
+        let rows = build_display_rows(&source, "", memory_desc(), &HashSet::new(), 100);
+        match rows.last().unwrap() {
+            DisplayRow::System { bytes } => assert_eq!(*bytes, 0),
+            other => panic!("expected the system row last, got {other:?}"),
         }
     }
 }

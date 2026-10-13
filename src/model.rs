@@ -13,7 +13,8 @@ pub struct ProcessInfo {
 
 /// One row of the process list: either a group header for one process
 /// name (totals over all its instances, with the expand/collapse state),
-/// or a single process, shown as a child row of its group.
+/// a single process, shown as a child row of its group, or the closing
+/// summary row with the memory owned by no process at all.
 #[derive(Debug, Clone)]
 pub enum DisplayRow {
     Group {
@@ -23,6 +24,12 @@ pub enum DisplayRow {
         expanded: bool,
     },
     Proc(ProcessInfo),
+    /// System-wide resident memory that belongs to no process: kernel,
+    /// drivers and the pages shared between processes. Not a real entry:
+    /// it exists so the listed rows reconcile with the header total.
+    System {
+        bytes: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

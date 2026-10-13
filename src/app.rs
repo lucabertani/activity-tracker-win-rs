@@ -56,6 +56,8 @@ pub(crate) struct AppState {
     // Lower-cased process names whose group the user has expanded.
     expanded_groups: HashSet<String>,
     total_ram_bytes: u64,
+    /// System-wide resident memory (kernel, drivers, shared pages included).
+    ram_in_use_bytes: u64,
     pub(crate) current_ram_percent: u32,
     pub(crate) cpu_monitor: CpuThrottleMonitor,
     cpu_throttling: bool,
@@ -77,6 +79,7 @@ impl AppState {
             visible_rows: Vec::new(),
             expanded_groups: HashSet::new(),
             total_ram_bytes: 0,
+            ram_in_use_bytes: 0,
             current_ram_percent: 0,
             cpu_monitor: CpuThrottleMonitor::new(),
             cpu_throttling: false,
@@ -438,7 +441,7 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
     // and the CPU path (per-core MSR reads with affinity pinning) is the
     // slower of the two.
     let mut cpu_throttling = false;
-    let mut ram_status: Option<(u32, u64)> = None;
+    let mut ram_status: Option<(u32, u64, u64)> = None;
     std::thread::scope(|s| {
         s.spawn(|| {
             cpu_throttling = state.cpu_monitor.refresh();
@@ -472,9 +475,10 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
     // from the settings, with the red override while thermal throttling.
     state.cpu_throttling = cpu_throttling;
 
-    let total_ram_bytes = if let Some((ram_percent, total)) = ram_status {
+    let total_ram_bytes = if let Some((ram_percent, total, available)) = ram_status {
         state.current_ram_percent = ram_percent;
         state.total_ram_bytes = total;
+        state.ram_in_use_bytes = total.saturating_sub(available);
 
         set_label_text(
             hwnd,
@@ -500,6 +504,7 @@ fn rebuild_visible_and_render(hwnd: HWND, state: &mut AppState) {
         &state.search_query,
         state.sort,
         &state.expanded_groups,
+        state.ram_in_use_bytes,
     );
     set_virtual_item_count(hwnd, state.visible_rows.len());
 }
@@ -664,6 +669,21 @@ fn process_cell_text(state: &AppState, row: i32, column: i32) -> String {
             3 => format!("{:.2}", process.memory_percent),
             _ => String::new(),
         },
+        DisplayRow::System { bytes } => {
+            let total_mib = *bytes as f64 / 1024.0 / 1024.0;
+            let total_percent = if state.total_ram_bytes == 0 {
+                0.0
+            } else {
+                (*bytes as f64 / state.total_ram_bytes as f64) * 100.0
+            };
+            match column {
+                0 => "System & shared".to_string(),
+                1 => "-".to_string(),
+                2 => format!("{:.2}", total_mib),
+                3 => format!("{:.2}", total_percent),
+                _ => String::new(),
+            }
+        }
     }
 }
 
@@ -694,6 +714,10 @@ fn terminate_selected_process(hwnd: HWND) {
                 .filter(|p| p.name.to_ascii_lowercase() == key)
                 .map(|p| p.pid)
                 .collect()
+        }
+        DisplayRow::System { .. } => {
+            show_error(hwnd, "That row is a system total, not a process.");
+            return;
         }
     };
     let pids: Vec<u32> = pids
