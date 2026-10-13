@@ -25,6 +25,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_Controls_Dialogs",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
+    "Wdk_System_SystemInformation",
 ] }
 
 [[bin]]
