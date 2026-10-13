@@ -3,12 +3,13 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 
 use crate::model::{DisplayRow, ProcessInfo, SortColumn, SortDirection, SortState};
-use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows_sys::Win32::System::ProcessStatus::{
     GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
+    PROCESS_MEMORY_COUNTERS_EX2,
 };
 use windows_sys::Win32::System::Threading::{
     OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ,
@@ -58,10 +59,10 @@ pub fn snapshot_processes(total_ram_bytes: u64) -> Vec<ProcessInfo> {
     out
 }
 
-/// Private working set in bytes: the value shown in the Task Manager's
-/// "Memory" column. The plain `WorkingSetSize` would also count file-backed
-/// pages — e.g. a llama.cpp server with an mmap'ed model would report the
-/// whole model size instead of its real RAM usage.
+/// Private working set in bytes: the resident-RAM value shown in the Task
+/// Manager's "Memory" column. The plain `WorkingSetSize` would also count
+/// file-backed pages — e.g. a llama.cpp server with an mmap'ed model would
+/// report the whole model size instead of its real RAM usage.
 fn process_private_ws_bytes(pid: u32) -> Option<u64> {
     let handle =
         unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
@@ -70,26 +71,49 @@ fn process_private_ws_bytes(pid: u32) -> Option<u64> {
         return None;
     }
 
-    let mut counters: PROCESS_MEMORY_COUNTERS_EX = unsafe { std::mem::zeroed() };
-    let ok = unsafe {
-        GetProcessMemoryInfo(
-            handle,
-            // The API takes the smaller struct and the cb field selects the
-            // EX layout (classic Win32 pattern).
-            &mut counters as *mut PROCESS_MEMORY_COUNTERS_EX as *mut PROCESS_MEMORY_COUNTERS,
-            std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32,
-        )
-    };
+    let bytes = query_private_ws_bytes(handle);
 
     unsafe {
         CloseHandle(handle);
     }
 
+    bytes
+}
+
+fn query_private_ws_bytes(handle: HANDLE) -> Option<u64> {
+    let mut ex2: PROCESS_MEMORY_COUNTERS_EX2 = unsafe { std::mem::zeroed() };
+    let ok = unsafe {
+        GetProcessMemoryInfo(
+            handle,
+            // The API takes any of the counters structs; the cb size selects
+            // which one gets filled (classic Win32 pattern).
+            &mut ex2 as *mut PROCESS_MEMORY_COUNTERS_EX2 as *mut PROCESS_MEMORY_COUNTERS,
+            std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX2>() as u32,
+        )
+    };
+
+    if ok != 0 && ex2.PrivateWorkingSetSize != 0 {
+        return Some(ex2.PrivateWorkingSetSize as u64);
+    }
+
+    // EX2 only exists since the September 2023 cumulative updates, and an older
+    // OS may report success while leaving the extra fields zeroed.
+    let mut ex: PROCESS_MEMORY_COUNTERS_EX = unsafe { std::mem::zeroed() };
+    let ok = unsafe {
+        GetProcessMemoryInfo(
+            handle,
+            &mut ex as *mut PROCESS_MEMORY_COUNTERS_EX as *mut PROCESS_MEMORY_COUNTERS,
+            std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32,
+        )
+    };
+
     if ok == 0 {
         return None;
     }
 
-    Some(counters.PrivateUsage as u64)
+    // Fallback: commit charge. An over-estimate, but the best older systems
+    // expose (the private working set is not available before EX2).
+    Some(ex.PrivateUsage as u64)
 }
 
 fn utf16_to_string(buf: &[u16]) -> String {
