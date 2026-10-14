@@ -15,7 +15,7 @@ const FREQ_RATIO_THRESHOLD: f64 = 0.70;
 /// rated frequency instead of the (possibly already throttled) current one.
 const RATED_RATIO_TO_TRUST: f64 = 0.70;
 /// Consecutive refresh ticks with a throttled core required before the
-/// warning lights up. Avoids one-tick flicker when a load burst ends and
+/// warning lights up (frequency heuristic only; the MSR flag is immediate). Avoids one-tick flicker when a load burst ends and
 /// usage lingers while the clock drops.
 const MIN_CONSECUTIVE_TICKS: u32 = 2;
 
@@ -27,8 +27,8 @@ const MIN_CONSECUTIVE_TICKS: u32 = 2;
 /// is not available (no admin rights / not installed).
 ///
 /// The check runs on the same refresh timer as the RAM percentage. As soon
-/// as a single core satisfies the condition (for two consecutive ticks), the
-/// whole CPU is reported as throttling.
+/// as a single core has the hardware flag set, the whole CPU is reported as
+/// throttling (the heuristic fallback needs two consecutive ticks).
 ///
 /// When the driver path is active, `refresh()` also captures the average
 /// per-core temperature (bits 22:16 of the same MSR converted with TjMax from
@@ -76,15 +76,17 @@ impl CpuThrottleMonitor {
         if self.msr.is_none() {
             self.msr = MsrThermalMonitor::open().ok();
         }
-        let (throttling, avg_temp) = if let Some(msr) = &self.msr {
+        if let Some(msr) = &self.msr {
+            // The hardware flag is authoritative: report as soon as any single
+            // core has it set, no debounce.
             let sample = msr.refresh();
-            (sample.throttling, sample.average_celsius())
-        } else {
-            (self.refresh_frequency_heuristic(), None)
-        };
-        self.last_avg_temp_c = avg_temp;
+            self.last_avg_temp_c = sample.average_celsius();
+            return sample.throttling;
+        }
+        self.last_avg_temp_c = None;
 
-        if throttling {
+        // The heuristic is noisy, so it needs consecutive ticks.
+        if self.refresh_frequency_heuristic() {
             self.consecutive_throttle_ticks += 1;
         } else {
             self.consecutive_throttle_ticks = 0;

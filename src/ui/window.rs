@@ -103,15 +103,15 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
             20,
             IDC_HEADER_CPU_TEMP,
         );
-        // Shown (in red) only while the CPU is thermal-throttling.
+        // Red "T" next to the CPU temperature, shown only while thermal-throttling.
         create_label(
             hwnd,
             hinstance,
             "",
+            470,
             20,
-            40,
-            360,
-            16,
+            20,
+            20,
             IDC_HEADER_CPU_THROTTLE,
         );
         create_button(

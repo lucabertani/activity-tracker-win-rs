@@ -464,11 +464,7 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
     set_label_text(
         hwnd,
         IDC_HEADER_CPU_THROTTLE,
-        if cpu_throttling {
-            "CPU thermal throttling"
-        } else {
-            ""
-        },
+        if cpu_throttling { "T" } else { "" },
     );
 
     // The tray icons (RAM + CPU) are refreshed on every tick: colors come
@@ -511,9 +507,13 @@ fn rebuild_visible_and_render(hwnd: HWND, state: &mut AppState) {
 
 /// Rebuilds both tray icons from the current settings: each icon is added
 /// or removed according to its enable flag and redrawn with the configured
-/// colors (red background while thermal throttling).
+/// colors (red background on the CPU icon, or on the RAM icon when the CPU
+/// one is off, while thermal throttling).
 pub(crate) fn refresh_tray_icons(hwnd: HWND, state: &mut AppState) {
     let red = state.settings.tray_icon_thermal_red && state.cpu_throttling;
+    // Only one icon lights up: the CPU one when shown, otherwise the RAM one.
+    let cpu_red = red && state.settings.tray_icon_cpu_enabled;
+    let ram_red = red && !state.settings.tray_icon_cpu_enabled;
 
     let ram_tip = format!("RAM {}%", state.current_ram_percent);
     apply_tray_icon(
@@ -523,7 +523,7 @@ pub(crate) fn refresh_tray_icons(hwnd: HWND, state: &mut AppState) {
         state.settings.tray_icon_ram_enabled,
         build_ram_icon(
             state.current_ram_percent,
-            red,
+            ram_red,
             state.settings.tray_icon_ram_bg,
             state.settings.tray_icon_ram_fg,
             state.settings.tray_icon_font_size,
@@ -547,7 +547,7 @@ pub(crate) fn refresh_tray_icons(hwnd: HWND, state: &mut AppState) {
         state.settings.tray_icon_cpu_enabled,
         build_cpu_icon(
             temp,
-            red,
+            cpu_red,
             state.settings.tray_icon_cpu_bg,
             state.settings.tray_icon_cpu_fg,
             state.settings.tray_icon_font_size,
