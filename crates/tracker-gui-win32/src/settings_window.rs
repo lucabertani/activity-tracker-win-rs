@@ -35,15 +35,15 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::app::{AppState, refresh_tray_icons, restart_refresh_timer, show_error};
-use crate::model::{
+use crate::window::{get_control_text, wide};
+use tracker_core::model::{
     AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_FONT_WEIGHT,
     DEFAULT_TRAY_ICON_FONT_SIZE, DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG,
     parse_refresh_interval_seconds,
 };
-use crate::settings::autostart::set_autostart;
-use crate::settings::store::save_settings;
-use crate::ui::tray::{build_cpu_icon, build_ram_icon, destroy_icon};
-use crate::ui::window::{get_control_text, wide};
+use tracker_platform::settings::autostart::set_autostart;
+use tracker_platform::settings::store::save_settings;
+use tracker_platform::tray::{build_cpu_icon, build_ram_icon, destroy_icon};
 
 pub const SETTINGS_CLASS: &str = "ActivityTrackerSettingsWindow";
 

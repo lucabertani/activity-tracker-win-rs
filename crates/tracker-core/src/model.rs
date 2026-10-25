@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::ui::tray::{TRAY_BG_COLOR, TRAY_TEXT_COLOR};
-
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub pid: u32,
@@ -228,6 +226,12 @@ pub struct AppSettings {
 fn default_true() -> bool {
     true
 }
+
+// Tray icon base colors, COLORREF (0x00BBGGRR).
+//pub const TRAY_BG_COLOR: u32 = 0x00800040; // #400080
+//pub const TRAY_BG_COLOR: u32 = 0x00353138; // #cbc6ce
+pub const TRAY_BG_COLOR: u32 = 0x003e3e3e; // #3e3e3e
+pub const TRAY_TEXT_COLOR: u32 = 0x00FFFFFF; // #ffffff
 
 // Default tray icon colors: dark gray background, white text. The CPU icon
 // starts with the same look; both are customizable in the settings window.

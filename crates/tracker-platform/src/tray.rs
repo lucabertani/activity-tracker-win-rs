@@ -18,6 +18,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::model::DEFAULT_TRAY_FONT_WEIGHT;
+pub use crate::model::{TRAY_BG_COLOR, TRAY_TEXT_COLOR};
 
 pub const TRAY_UID_RAM: u32 = 1;
 pub const TRAY_UID_CPU: u32 = 2;
@@ -26,11 +27,7 @@ pub const TRAY_UID_FALLBACK: u32 = 3;
 pub const WM_TRAYICON: u32 = 0x0400 + 1;
 
 // COLORREF format is 0x00BBGGRR.
-//pub const TRAY_BG_COLOR: u32 = 0x00800040; // #400080
-//pub const TRAY_BG_COLOR: u32 = 0x00353138; // #cbc6ce
-pub const TRAY_BG_COLOR: u32 = 0x003e3e3e; // #3e3e3e
 pub const TRAY_BG_RED: u32 = 0x0000FF; // #ff0000, used while thermal-throttling
-pub const TRAY_TEXT_COLOR: u32 = 0x00FFFFFF; // #ffffff
 
 // Font settings.
 //pub const TRAY_FONT_NAME: &str = "Tahoma";

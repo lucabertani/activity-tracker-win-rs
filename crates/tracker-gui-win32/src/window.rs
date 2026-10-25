@@ -9,12 +9,12 @@ use windows_sys::Win32::UI::Controls::{
     LVS_OWNERDATA, LVS_REPORT, LVS_SHOWSELALWAYS, LVSICF_NOSCROLL, WC_LISTVIEWW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BM_GETCHECK, BM_SETCHECK, BS_PUSHBUTTON, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-    CreateWindowExW, ES_AUTOHSCROLL, GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_NOTOPMOST,
-    HWND_TOPMOST, IDC_ARROW, LoadCursorW, RegisterClassW, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOMOVE,
-    SWP_NOSIZE, SendMessageW, SetForegroundWindow, SetWindowPos, SetWindowTextW, ShowWindow,
-    WNDCLASSW, WS_BORDER, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW,
-    WS_TABSTOP, WS_VISIBLE,
+    BS_PUSHBUTTON, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, ES_AUTOHSCROLL,
+    GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW,
+    LoadCursorW, RegisterClassW, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOMOVE, SWP_NOSIZE,
+    SendMessageW, SetForegroundWindow, SetWindowPos, SetWindowTextW, ShowWindow, WNDCLASSW,
+    WS_BORDER, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP,
+    WS_VISIBLE,
 };
 
 pub const IDC_HEADER_RAM: i32 = 2001;
@@ -308,26 +308,6 @@ pub fn get_control_text(hwnd: HWND, id: i32) -> String {
         let mut buf = vec![0u16; (len as usize) + 1];
         let copied = GetWindowTextW(control, buf.as_mut_ptr(), buf.len() as i32);
         String::from_utf16_lossy(&buf[..(copied as usize)])
-    }
-}
-
-pub fn set_checkbox(hwnd: HWND, id: i32, checked: bool) {
-    unsafe {
-        let control = windows_sys::Win32::UI::WindowsAndMessaging::GetDlgItem(hwnd, id);
-        if !control.is_null() {
-            let _ = SendMessageW(control, BM_SETCHECK, if checked { 1 } else { 0 }, 0);
-        }
-    }
-}
-
-pub fn is_checkbox_checked(hwnd: HWND, id: i32) -> bool {
-    unsafe {
-        let control = windows_sys::Win32::UI::WindowsAndMessaging::GetDlgItem(hwnd, id);
-        if control.is_null() {
-            return false;
-        }
-
-        SendMessageW(control, BM_GETCHECK, 0, 0) == 1
     }
 }
 

@@ -4,7 +4,7 @@
 // Throttling", "Package/Ring Thermal Throttling" and "IA Limit Reasons".
 use std::time::Duration;
 
-use activity_tracker_win_rs::monitor::msr::{MsrThermalMonitor, OpenError};
+use tracker_platform::monitor::msr::{MsrThermalMonitor, OpenError};
 
 fn bit(value: Option<u64>, index: u32) -> char {
     match value {

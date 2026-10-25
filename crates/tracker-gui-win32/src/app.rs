@@ -1,6 +1,5 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::collections::HashSet;
 use std::mem;
 
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -11,35 +10,33 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::{
     LVIF_TEXT, LVN_GETDISPINFOW, LVN_ITEMACTIVATE, NMLISTVIEW, NMLVDISPINFOW,
 };
-use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, CREATESTRUCTW, DefWindowProcW, DestroyWindow, DispatchMessageW, EN_CHANGE,
     GWLP_USERDATA, GetCursorPos, GetDlgCtrlID, GetMessageW, KillTimer, MB_ICONERROR, MB_OK, MSG,
-    MessageBoxW, PostQuitMessage, SW_SHOWNORMAL, SetTimer, SetWindowLongPtrW, TranslateMessage,
-    WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NOTIFY,
+    MessageBoxW, PostQuitMessage, SetTimer, SetWindowLongPtrW, TranslateMessage, WM_CLOSE,
+    WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NOTIFY,
     WM_RBUTTONUP, WM_SIZE, WM_TIMER,
 };
 
-use crate::error::{AppError, AppResult};
-use crate::model::{AppSettings, DisplayRow, ProcessInfo, SortColumn, SortState};
-use crate::monitor::cpu::CpuThrottleMonitor;
-use crate::monitor::memory::total_memory_status;
-use crate::monitor::msr::{MsrThermalMonitor, OpenError};
-use crate::monitor::processes::{build_display_rows, snapshot_processes, terminate_process};
-use crate::settings::autostart::set_autostart;
-use crate::settings::store::load_settings;
-use crate::ui::menu::{CMD_EXIT_APP, CMD_OPEN_WINDOW, show_tray_context_menu};
-use crate::ui::settings_window::{open_settings, register_settings_window_class};
-use crate::ui::tray::{
-    TRAY_UID_CPU, TRAY_UID_FALLBACK, TRAY_UID_RAM, WM_TRAYICON, add_tray_icon, build_cpu_icon,
-    build_fallback_icon, build_ram_icon, destroy_icon, remove_tray_icon, update_tray_icon,
-    update_tray_tooltip,
-};
-use crate::ui::window::{
+use crate::menu::{CMD_EXIT_APP, CMD_OPEN_WINDOW, show_tray_context_menu};
+use crate::settings_window::{open_settings, register_settings_window_class};
+use crate::window::{
     IDC_HEADER_CPU_TEMP, IDC_HEADER_CPU_THROTTLE, IDC_HEADER_RAM, IDC_PROCESS_LIST, IDC_SEARCH,
     IDC_SETTINGS_BUTTON, IDC_SORT_MEMORY, IDC_SORT_NAME, IDC_TERMINATE_PROCESS, create_controls,
     create_main_window, get_control_text, hide_main_window, register_main_window_class,
     selected_process_row, set_label_text, set_virtual_item_count, show_main_window, wide,
+};
+use tracker_core::error::{AppError, AppResult};
+use tracker_core::model::{AppSettings, DisplayRow, SortColumn};
+use tracker_core::process_list::{ProcessList, mib};
+use tracker_platform::monitor::cpu::CpuThrottleMonitor;
+use tracker_platform::monitor::memory::total_memory_status;
+use tracker_platform::monitor::processes::{snapshot_processes, terminate_process};
+use tracker_platform::startup::Startup;
+use tracker_platform::tray::{
+    TRAY_UID_CPU, TRAY_UID_FALLBACK, TRAY_UID_RAM, WM_TRAYICON, add_tray_icon, build_cpu_icon,
+    build_fallback_icon, build_ram_icon, destroy_icon, remove_tray_icon, update_tray_icon,
+    update_tray_tooltip,
 };
 
 const TIMER_REFRESH_ID: usize = 1;
@@ -49,15 +46,7 @@ type HICON = windows_sys::Win32::UI::WindowsAndMessaging::HICON;
 
 pub(crate) struct AppState {
     pub(crate) settings: AppSettings,
-    sort: SortState,
-    search_query: String,
-    all_processes: Vec<ProcessInfo>,
-    visible_rows: Vec<DisplayRow>,
-    // Lower-cased process names whose group the user has expanded.
-    expanded_groups: HashSet<String>,
-    total_ram_bytes: u64,
-    /// System-wide resident memory (kernel, drivers, shared pages included).
-    ram_in_use_bytes: u64,
+    processes: ProcessList,
     pub(crate) current_ram_percent: u32,
     pub(crate) cpu_monitor: CpuThrottleMonitor,
     cpu_throttling: bool,
@@ -73,19 +62,13 @@ impl AppState {
     fn new(settings: AppSettings) -> Self {
         Self {
             settings,
-            sort: SortState::default(),
-            search_query: String::new(),
-            all_processes: Vec::new(),
-            visible_rows: Vec::new(),
-            expanded_groups: HashSet::new(),
-            total_ram_bytes: 0,
-            ram_in_use_bytes: 0,
+            processes: ProcessList::new(),
             current_ram_percent: 0,
             cpu_monitor: CpuThrottleMonitor::new(),
             cpu_throttling: false,
             // Same color as the window background: used as the background
             // brush when painting the red throttling label.
-            window_bg_brush: unsafe { CreateSolidBrush(crate::ui::window::APP_WINDOW_BG_COLOR) },
+            window_bg_brush: unsafe { CreateSolidBrush(crate::window::APP_WINDOW_BG_COLOR) },
             tray_icon_ram: std::ptr::null_mut(),
             tray_icon_cpu: std::ptr::null_mut(),
             tray_icon_fallback: std::ptr::null_mut(),
@@ -95,72 +78,7 @@ impl AppState {
     }
 }
 
-/// The PawnIO temperature device allows administrators only: relaunch this
-/// exe elevated (`runas`) and let the copy take over. Returns only when
-/// elevation is not possible (UAC declined): the app then runs without
-/// CPU temperatures.
-fn relaunch_elevated() {
-    use std::os::windows::ffi::OsStrExt;
-
-    let Ok(exe) = std::env::current_exe() else {
-        return;
-    };
-    let file: Vec<u16> = exe
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    let params: String = std::env::args()
-        .skip(1)
-        .map(|arg| {
-            if arg.contains([' ', '"']) {
-                format!("\"{}\"", arg.replace('"', "\\\""))
-            } else {
-                arg
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    let params = wide(&params);
-
-    let launched = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            wide("runas").as_ptr(),
-            file.as_ptr(),
-            params.as_ptr(),
-            std::ptr::null(),
-            SW_SHOWNORMAL,
-        )
-    };
-    if launched as isize > 32 {
-        // The elevated copy owns the window and tray icons from here on.
-        std::process::exit(0);
-    }
-}
-
-pub fn run() -> AppResult<()> {
-    // The PawnIO device is admin-only: when it exists but denies this
-    // process, take over with an elevated copy (UAC prompt).
-    if let Err(OpenError::AccessDenied) = MsrThermalMonitor::open() {
-        relaunch_elevated();
-    }
-
-    let mut settings = load_settings().unwrap_or_else(|_| AppSettings::default());
-    settings = settings.normalized();
-
-    // Best-effort autostart re-sync: keeps the registered exe path fresh and
-    // migrates the legacy Run-key entry to the elevated logon task. A
-    // non-elevated start just keeps the existing registration.
-    if settings.start_on_windows
-        && let Ok(exe) = std::env::current_exe()
-    {
-        let _ = set_autostart(true, settings.start_in_background, &exe);
-    }
-
-    let start_in_background_from_cli =
-        std::env::args().any(|a| a.eq_ignore_ascii_case("--background"));
-
+pub fn run(startup: Startup) -> AppResult<()> {
     let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) } as HINSTANCE;
     if hinstance.is_null() {
         return Err(AppError::WinApi("GetModuleHandleW failed"));
@@ -174,7 +92,7 @@ pub fn run() -> AppResult<()> {
         return Err(AppError::WinApi("RegisterClassW (settings) failed"));
     }
 
-    let boxed_state = Box::new(AppState::new(settings));
+    let boxed_state = Box::new(AppState::new(startup.settings));
     let state_ptr = Box::into_raw(boxed_state);
 
     let hwnd = create_main_window(hinstance, state_ptr as isize);
@@ -185,16 +103,7 @@ pub fn run() -> AppResult<()> {
         return Err(AppError::WinApi("CreateWindowExW failed"));
     }
 
-    // Hide the window only when explicitly requested: started by Windows
-    // autostart (--background) or the "window_start_hidden" setting.
-    // A manual double-click always shows the window, even if
-    // "Start in background" is enabled.
-    let start_hidden = unsafe {
-        let state = &*state_ptr;
-        state.settings.window_start_hidden || start_in_background_from_cli
-    };
-
-    if start_hidden {
+    if startup.start_hidden {
         hide_main_window(hwnd);
     }
 
@@ -262,26 +171,11 @@ unsafe extern "system" fn wnd_proc(
                     LVN_ITEMACTIVATE => {
                         let item = lparam as *const NMLISTVIEW;
                         if !item.is_null()
+                            && (*item).iItem >= 0
                             && let Some(state) = get_state_mut(hwnd)
+                            && state.processes.toggle_group((*item).iItem as usize)
                         {
-                            let key =
-                                state
-                                    .visible_rows
-                                    .get((*item).iItem as usize)
-                                    .and_then(|row| match row {
-                                        DisplayRow::Group { name, .. } => {
-                                            Some(name.to_ascii_lowercase())
-                                        }
-                                        _ => None,
-                                    });
-                            if let Some(key) = key {
-                                // remove returns true if the group was expanded:
-                                // true -> collapse, false -> expand.
-                                if !state.expanded_groups.remove(&key) {
-                                    state.expanded_groups.insert(key);
-                                }
-                                rebuild_visible_and_render(hwnd, state);
-                            }
+                            render_rows(hwnd, state);
                         }
                     }
                     _ => {}
@@ -296,20 +190,22 @@ unsafe extern "system" fn wnd_proc(
             match id {
                 IDC_SEARCH if notify == EN_CHANGE as u16 => {
                     if let Some(state) = get_state_mut(hwnd) {
-                        state.search_query = get_control_text(hwnd, IDC_SEARCH);
-                        rebuild_visible_and_render(hwnd, state);
+                        state
+                            .processes
+                            .set_search(&get_control_text(hwnd, IDC_SEARCH));
+                        render_rows(hwnd, state);
                     }
                 }
                 IDC_SORT_NAME if notify == BN_CLICKED as u16 => {
                     if let Some(state) = get_state_mut(hwnd) {
-                        state.sort.toggle_for(SortColumn::Name);
-                        rebuild_visible_and_render(hwnd, state);
+                        state.processes.toggle_sort(SortColumn::Name);
+                        render_rows(hwnd, state);
                     }
                 }
                 IDC_SORT_MEMORY if notify == BN_CLICKED as u16 => {
                     if let Some(state) = get_state_mut(hwnd) {
-                        state.sort.toggle_for(SortColumn::Memory);
-                        rebuild_visible_and_render(hwnd, state);
+                        state.processes.toggle_sort(SortColumn::Memory);
+                        render_rows(hwnd, state);
                     }
                 }
                 IDC_SETTINGS_BUTTON if notify == BN_CLICKED as u16 => {
@@ -462,38 +358,31 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
     // from the settings, with the red override while thermal throttling.
     state.cpu_throttling = cpu_throttling;
 
-    let total_ram_bytes = if let Some((ram_percent, total, available)) = ram_status {
+    let memory = if let Some((ram_percent, total, available)) = ram_status {
         state.current_ram_percent = ram_percent;
-        state.total_ram_bytes = total;
-        state.ram_in_use_bytes = total.saturating_sub(available);
 
         set_label_text(
             hwnd,
             IDC_HEADER_RAM,
             &format!("Total RAM used: {}%", state.current_ram_percent),
         );
-        Some(total)
+        Some((total, total.saturating_sub(available)))
     } else {
         None
     };
 
     refresh_tray_icons(hwnd, state);
 
-    if let Some(total_ram_bytes) = total_ram_bytes {
-        state.all_processes = snapshot_processes(total_ram_bytes);
-        rebuild_visible_and_render(hwnd, state);
+    if let Some((total, in_use)) = memory {
+        state
+            .processes
+            .set_snapshot(snapshot_processes(total), total, in_use);
+        render_rows(hwnd, state);
     }
 }
 
-fn rebuild_visible_and_render(hwnd: HWND, state: &mut AppState) {
-    state.visible_rows = build_display_rows(
-        &state.all_processes,
-        &state.search_query,
-        state.sort,
-        &state.expanded_groups,
-        state.ram_in_use_bytes,
-    );
-    set_virtual_item_count(hwnd, state.visible_rows.len());
+fn render_rows(hwnd: HWND, state: &AppState) {
+    set_virtual_item_count(hwnd, state.processes.rows().len());
 }
 
 /// Rebuilds both tray icons from the current settings: each icon is added
@@ -621,7 +510,8 @@ fn process_cell_text(state: &AppState, row: i32, column: i32) -> String {
         return String::new();
     }
 
-    let Some(display) = state.visible_rows.get(row as usize) else {
+    let list = &state.processes;
+    let Some(display) = list.rows().get(row as usize) else {
         return String::new();
     };
 
@@ -631,26 +521,18 @@ fn process_cell_text(state: &AppState, row: i32, column: i32) -> String {
             total_bytes,
             count,
             expanded,
-        } => {
-            let total_mib = *total_bytes as f64 / 1024.0 / 1024.0;
-            let total_percent = if state.total_ram_bytes == 0 {
-                0.0
-            } else {
-                (*total_bytes as f64 / state.total_ram_bytes as f64) * 100.0
-            };
-            match column {
-                0 => format!(
-                    "{} {} ({}x)",
-                    if *expanded { "▼" } else { "►" },
-                    name,
-                    count
-                ),
-                1 => "-".to_string(),
-                2 => format!("{:.2}", total_mib),
-                3 => format!("{:.2}", total_percent),
-                _ => String::new(),
-            }
-        }
+        } => match column {
+            0 => format!(
+                "{} {} ({}x)",
+                if *expanded { "▼" } else { "►" },
+                name,
+                count
+            ),
+            1 => "-".to_string(),
+            2 => format!("{:.2}", mib(*total_bytes)),
+            3 => format!("{:.2}", list.percent_of_ram(*total_bytes)),
+            _ => String::new(),
+        },
         DisplayRow::Proc(process) => match column {
             0 => format!("      {}", process.name),
             1 => process.pid.to_string(),
@@ -658,21 +540,13 @@ fn process_cell_text(state: &AppState, row: i32, column: i32) -> String {
             3 => format!("{:.2}", process.memory_percent),
             _ => String::new(),
         },
-        DisplayRow::System { bytes } => {
-            let total_mib = *bytes as f64 / 1024.0 / 1024.0;
-            let total_percent = if state.total_ram_bytes == 0 {
-                0.0
-            } else {
-                (*bytes as f64 / state.total_ram_bytes as f64) * 100.0
-            };
-            match column {
-                0 => "System & shared".to_string(),
-                1 => "-".to_string(),
-                2 => format!("{:.2}", total_mib),
-                3 => format!("{:.2}", total_percent),
-                _ => String::new(),
-            }
-        }
+        DisplayRow::System { bytes } => match column {
+            0 => "System & shared".to_string(),
+            1 => "-".to_string(),
+            2 => format!("{:.2}", mib(*bytes)),
+            3 => format!("{:.2}", list.percent_of_ram(*bytes)),
+            _ => String::new(),
+        },
     }
 }
 
@@ -686,41 +560,16 @@ fn terminate_selected_process(hwnd: HWND) {
         return;
     };
 
-    let Some(display) = state.visible_rows.get(row as usize).cloned() else {
-        show_error(hwnd, "Invalid process.");
-        return;
-    };
-
-    // A group row terminates every instance of that process
-    // (like Task Manager's "End task group"); a child row just itself.
-    let pids: Vec<u32> = match display {
-        DisplayRow::Proc(process) => vec![process.pid],
-        DisplayRow::Group { name, .. } => {
-            let key = name.to_ascii_lowercase();
-            state
-                .all_processes
-                .iter()
-                .filter(|p| p.name.to_ascii_lowercase() == key)
-                .map(|p| p.pid)
-                .collect()
-        }
-        DisplayRow::System { .. } => {
-            show_error(hwnd, "That row is a system total, not a process.");
+    let pids = match state
+        .processes
+        .pids_to_terminate(row as usize, std::process::id())
+    {
+        Ok(pids) => pids,
+        Err(err) => {
+            show_error(hwnd, &err.to_string());
             return;
         }
     };
-    let pids: Vec<u32> = pids
-        .into_iter()
-        .filter(|pid| *pid != std::process::id())
-        .collect();
-
-    if pids.is_empty() {
-        show_error(
-            hwnd,
-            "You cannot terminate the current application from here.",
-        );
-        return;
-    }
 
     let mut first_error: Option<String> = None;
     for pid in &pids {

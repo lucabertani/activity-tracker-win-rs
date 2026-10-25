@@ -9,6 +9,9 @@ fn main() {
 }
 
 #[cfg(target_os = "windows")]
+use tracker_platform::startup::{ARG_NO_ELEVATE, has_arg};
+
+#[cfg(target_os = "windows")]
 fn main() {
     // GUI app without console: surface panics and startup errors in a
     // message box instead of failing silently on double-click.
@@ -19,9 +22,21 @@ fn main() {
         show_fatal_error("Activity Tracker - Error", &message);
     }));
 
-    if let Err(err) = activity_tracker_win_rs::run() {
+    // The PawnIO device is admin-only: when it exists but denies this
+    // process, take over with an elevated copy (UAC prompt).
+    if !has_arg(ARG_NO_ELEVATE) {
+        tracker_platform::elevation::elevate_if_driver_denies_access();
+    }
+    let startup = tracker_platform::startup::prepare();
+
+    if let Err(err) = run_gui(startup) {
         show_fatal_error("Activity Tracker - Startup error", &format!("{err}"));
     }
+}
+
+#[cfg(all(target_os = "windows", feature = "gui-win32"))]
+fn run_gui(startup: tracker_platform::startup::Startup) -> tracker_core::error::AppResult<()> {
+    tracker_gui_win32::run(startup)
 }
 
 #[cfg(target_os = "windows")]

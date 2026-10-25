@@ -2,11 +2,11 @@
 
 use std::sync::Mutex;
 
-use activity_tracker_win_rs::model::{
+use tracker_core::model::{
     AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_FONT_WEIGHT,
     DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG, parse_refresh_interval_seconds,
 };
-use activity_tracker_win_rs::settings::store::{load_settings, save_settings, settings_path};
+use tracker_platform::settings::store::{load_settings, save_settings, settings_path};
 
 static APPDATA_LOCK: Mutex<()> = Mutex::new(());
 

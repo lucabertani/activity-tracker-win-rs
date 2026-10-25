@@ -45,7 +45,7 @@ const IOCTL_PIO_EXECUTE_FN: u32 = DEVICE_TYPE | (0x841 << 2);
 const FN_NAME_LENGTH: usize = 32;
 /// Compiled + signed `IntelMSR` module (LGPL-2.1, namazso/PawnIO.Modules
 /// 0.2.11): exposes only a whitelist of MSR reads/writes.
-const INTELMSR_MODULE: &[u8] = include_bytes!("../../driver/pawnio/IntelMSR.bin");
+const INTELMSR_MODULE: &[u8] = include_bytes!("../../../../driver/pawnio/IntelMSR.bin");
 
 const MSR_IA32_MPERF: u32 = 0xE7;
 const MSR_IA32_APERF: u32 = 0xE8;

@@ -1,0 +1,10 @@
+[package]
+name = "tracker-gui-win32"
+description = "Legacy GUI on the standard Win32 controls."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tracker-core.workspace = true
+tracker-platform.workspace = true
+windows-sys.workspace = true
