@@ -58,7 +58,7 @@ Misure release (Core Ultra 9 185H, refresh 4 s, senza driver):
 
 | | GPUI, finestra aperta | GPUI, nel tray | Legacy Win32 |
 |---|---|---|---|
-| exe | 30,3 MB | | ~1–2 MB (build solo legacy) |
+| exe | 30,3 MB | | pochi MB con la build solo legacy (non rimisurato) |
 | apertura finestra | 0,32 s | | |
 | working set | 123 MB | 120 MB | 16 MB |
 | CPU (20 s) | 469 ms (~2,3% di un core) | 78 ms (~0,4%) | 109 ms (~0,5%) |
