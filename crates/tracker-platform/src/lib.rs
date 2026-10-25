@@ -8,6 +8,7 @@
 
 pub mod elevation;
 pub mod monitor;
+pub mod restart;
 pub mod sampler;
 pub mod settings;
 pub mod startup;

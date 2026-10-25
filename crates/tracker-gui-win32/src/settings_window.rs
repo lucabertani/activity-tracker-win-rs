@@ -28,19 +28,21 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CB_SETCURSEL, CBN_SELCHANGE, CBS_DROPDOWNLIST, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
     CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, ES_AUTOHSCROLL, GWLP_HWNDPARENT,
     GWLP_USERDATA, GetDlgCtrlID, GetDlgItem, GetWindowLongPtrW, HMENU, IDC_ARROW, LoadCursorW,
-    RegisterClassW, STN_CLICKED, SW_HIDE, SW_RESTORE, SW_SHOW, SendMessageW, SetForegroundWindow,
-    SetWindowLongPtrW, SetWindowTextW, ShowWindow, WM_CLOSE, WM_COMMAND, WM_CREATE,
-    WM_CTLCOLORSTATIC, WM_DESTROY, WM_NOTIFY, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE,
-    WS_EX_CONTROLPARENT, WS_EX_DLGMODALFRAME, WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    PostMessageW, RegisterClassW, STN_CLICKED, SW_HIDE, SW_RESTORE, SW_SHOW, SendMessageW,
+    SetForegroundWindow, SetWindowLongPtrW, SetWindowTextW, ShowWindow, WM_CLOSE, WM_COMMAND,
+    WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_NOTIFY, WNDCLASSW, WS_CAPTION, WS_CHILD,
+    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_EX_DLGMODALFRAME, WS_MINIMIZEBOX, WS_SYSMENU,
+    WS_TABSTOP, WS_VISIBLE,
 };
 
-use crate::app::{AppState, refresh_tray_icons, restart_refresh_timer, show_error};
+use crate::app::{AppState, WM_APP_EXIT, refresh_tray_icons, restart_refresh_timer, show_error};
 use crate::window::{get_control_text, wide};
 use tracker_core::model::{
     AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_FONT_WEIGHT,
     DEFAULT_TRAY_ICON_FONT_SIZE, DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG,
     parse_refresh_interval_seconds,
 };
+use tracker_platform::restart::{confirm_switch, relaunch};
 use tracker_platform::settings::autostart::set_autostart;
 use tracker_platform::settings::store::save_settings;
 use tracker_platform::tray::{build_cpu_icon, build_ram_icon, destroy_icon};
@@ -61,6 +63,7 @@ const IDC_CHK_THERMAL_RED: i32 = 3003;
 const IDC_EDIT_INTERVAL: i32 = 3004;
 const IDC_BTN_APPLY: i32 = 3005;
 const IDC_BTN_CLOSE: i32 = 3006;
+const IDC_CHK_MODERN_UI: i32 = 3007;
 const IDC_CHK_RAM_ENABLED: i32 = 3101;
 const IDC_PREVIEW_RAM: i32 = 3102;
 const IDC_SWATCH_RAM_BG: i32 = 3103;
@@ -221,6 +224,7 @@ unsafe extern "system" fn wnd_proc(
                 {
                     on_color(hwnd, data, id);
                 }
+                IDC_CHK_MODERN_UI if notify == BN_CLICKED => on_switch_ui(hwnd, data),
                 IDC_BTN_APPLY if notify == BN_CLICKED => on_apply(hwnd, data),
                 IDC_BTN_RESTORE if notify == BN_CLICKED => on_restore_defaults(hwnd, data),
                 IDC_COMBO_FONT_SIZE if notify == CBN_SELCHANGE => on_font_size(hwnd, data),
@@ -418,6 +422,20 @@ fn create_controls(hwnd: HWND, data: &mut SettingsData) {
             IDC_BTN_APPLY,
         ),
     ];
+    if unsafe { (*data.state).can_switch_ui } {
+        // Unchecked: this is the classic interface. Ticking it asks to
+        // restart into the new one.
+        data.general_controls.push(create_checkbox(
+            hwnd,
+            hinstance,
+            &class_checkbox,
+            "Use the new interface (more RAM and CPU)",
+            32,
+            192,
+            320,
+            IDC_CHK_MODERN_UI,
+        ));
+    }
 
     // --- Tray icons page ---
     let preview_ram = create_icon_preview(hwnd, IDC_PREVIEW_RAM, 32, 76);
@@ -909,6 +927,39 @@ fn on_checkbox(hwnd: HWND, data: &mut SettingsData, id: i32) {
         apply_autostart(hwnd, state);
     } else {
         refresh_tray_icons(main_hwnd(hwnd), state);
+    }
+}
+
+/// Restarts into the GPUI interface after the user confirms.
+fn on_switch_ui(hwnd: HWND, data: &mut SettingsData) {
+    if !confirm_switch(hwnd, true) {
+        set_check(hwnd, IDC_CHK_MODERN_UI, false);
+        return;
+    }
+    let state = unsafe { &mut *data.state };
+    let mut settings = state.settings.clone();
+    settings.modern_ui = true;
+    if let Err(err) = save_settings(&settings) {
+        set_check(hwnd, IDC_CHK_MODERN_UI, false);
+        show_error(hwnd, &format!("Could not save settings: {err}"));
+        return;
+    }
+    state.settings = settings;
+    if let Err(err) = relaunch() {
+        set_check(hwnd, IDC_CHK_MODERN_UI, false);
+        show_error(
+            hwnd,
+            &format!(
+                "Could not restart: {err}
+The new interface is used from the next start."
+            ),
+        );
+        return;
+    }
+    // Quit through the main window (tray icons removed); this window goes
+    // with it, so nothing here may run after the message is handled.
+    unsafe {
+        PostMessageW(main_hwnd(hwnd), WM_APP_EXIT, 0, 0);
     }
 }
 

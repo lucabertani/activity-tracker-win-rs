@@ -34,6 +34,7 @@ fn settings_roundtrip_uses_appdata_location() {
         tray_icon_cpu_fg: DEFAULT_TRAY_CPU_FG,
         tray_icon_font_size: 0,
         tray_icon_font_weight: DEFAULT_TRAY_FONT_WEIGHT,
+        modern_ui: false,
     };
 
     save_settings(&source).expect("save settings");
@@ -48,6 +49,7 @@ fn settings_roundtrip_uses_appdata_location() {
     assert_eq!(loaded.refresh_interval_seconds, 7);
     assert!(loaded.window_start_hidden);
     assert!(loaded.show_tray_tooltip);
+    assert!(!loaded.modern_ui);
 }
 
 #[test]
@@ -72,6 +74,8 @@ fn settings_with_utf8_bom_still_load() {
     assert!(loaded.start_on_windows);
     assert_eq!(loaded.refresh_interval_seconds, 4);
     assert!(loaded.tray_icon_thermal_red);
+    // Settings written before the interface switch keep the new interface.
+    assert!(loaded.modern_ui);
 }
 
 #[test]

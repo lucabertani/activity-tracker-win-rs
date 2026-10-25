@@ -37,19 +37,20 @@ fn main() {
     }
 }
 
-/// Force the legacy Win32 GUI.
+/// Picks the frontend: GPUI when the "new interface" setting is on and
+/// `--legacy-ui` is not given (and GPUI is compiled in); falls back to the
+/// Win32 GUI when GPUI cannot start (e.g. no usable DirectX 11 device).
 #[cfg(target_os = "windows")]
-const ARG_LEGACY_UI: &str = "--legacy-ui";
+fn run_gui(mut startup: tracker_platform::startup::Startup) -> tracker_core::error::AppResult<()> {
+    startup.can_switch_ui = cfg!(all(feature = "gui-gpui", feature = "gui-win32"));
 
-/// Picks the frontend: GPUI unless `--legacy-ui` is given (or GPUI is not
-/// compiled in); falls back to the Win32 GUI when GPUI cannot start (e.g.
-/// no usable DirectX 11 device).
-#[cfg(target_os = "windows")]
-fn run_gui(startup: tracker_platform::startup::Startup) -> tracker_core::error::AppResult<()> {
     #[cfg(feature = "gui-gpui")]
-    if !(cfg!(feature = "gui-win32") && has_arg(ARG_LEGACY_UI)) {
+    if !cfg!(feature = "gui-win32")
+        || (startup.settings.modern_ui && !has_arg(tracker_platform::startup::ARG_LEGACY_UI))
+    {
         let settings = startup.settings.clone();
         let start_hidden = startup.start_hidden;
+        let can_switch_ui = startup.can_switch_ui;
         match tracker_gui_gpui::run(startup) {
             Ok(()) => return Ok(()),
             #[cfg(feature = "gui-win32")]
@@ -57,11 +58,12 @@ fn run_gui(startup: tracker_platform::startup::Startup) -> tracker_core::error::
                 return tracker_gui_win32::run(tracker_platform::startup::Startup {
                     settings,
                     start_hidden,
+                    can_switch_ui,
                 });
             }
             #[cfg(not(feature = "gui-win32"))]
             Err(err) => {
-                let _ = (settings, start_hidden);
+                let _ = (settings, start_hidden, can_switch_ui);
                 return Err(err);
             }
         }

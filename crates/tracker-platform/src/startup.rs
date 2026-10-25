@@ -8,6 +8,8 @@ use crate::settings::store::load_settings;
 pub const ARG_BACKGROUND: &str = "--background";
 /// Never ask for elevation (development / smoke tests): no temperatures.
 pub const ARG_NO_ELEVATE: &str = "--no-elevate";
+/// Force the classic Win32 interface for this run.
+pub const ARG_LEGACY_UI: &str = "--legacy-ui";
 
 pub struct Startup {
     pub settings: AppSettings,
@@ -16,6 +18,8 @@ pub struct Startup {
     /// double-click always shows the window, even if "Start in background"
     /// is enabled.
     pub start_hidden: bool,
+    /// Both interfaces are compiled in: the settings offer the switch.
+    pub can_switch_ui: bool,
 }
 
 /// Loads the settings and re-syncs the autostart registration. Call after
@@ -38,6 +42,7 @@ pub fn prepare() -> Startup {
     Startup {
         start_hidden: settings.window_start_hidden || from_cli,
         settings,
+        can_switch_ui: false,
     }
 }
 

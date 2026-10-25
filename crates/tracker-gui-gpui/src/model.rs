@@ -9,6 +9,7 @@ use gpui_kit::{App, AppContext, Context, Entity};
 use tracker_core::model::{AppSettings, ThermalStatus};
 use tracker_core::process_list::ProcessList;
 use tracker_platform::monitor::processes::terminate_process;
+use tracker_platform::restart::relaunch;
 use tracker_platform::sampler::{Sampler, Snapshot};
 use tracker_platform::settings::autostart::set_autostart;
 use tracker_platform::settings::store::save_settings;
@@ -34,6 +35,8 @@ pub struct AppModel {
     pub thermal: ThermalStatus,
     /// A snapshot arrived at least once.
     pub has_data: bool,
+    /// The classic interface is compiled in: settings offer to switch.
+    pub can_switch_ui: bool,
     sampler: Option<Sampler>,
     tray: Option<TrayHost>,
 }
@@ -43,7 +46,12 @@ impl gpui_kit::EventEmitter<ModelEvent> for AppModel {}
 impl AppModel {
     /// Starts the sampler and the tray host and pumps their messages into
     /// the model on the UI thread.
-    pub fn new(settings: AppSettings, window_open: bool, cx: &mut App) -> Entity<Self> {
+    pub fn new(
+        settings: AppSettings,
+        window_open: bool,
+        can_switch_ui: bool,
+        cx: &mut App,
+    ) -> Entity<Self> {
         let (tx, rx) = unbounded::<Incoming>();
 
         let model = cx.new(|_| Self {
@@ -54,6 +62,7 @@ impl AppModel {
             ram_percent: 0,
             thermal: ThermalStatus::default(),
             has_data: false,
+            can_switch_ui,
         });
 
         let weak = model.downgrade();
@@ -142,6 +151,20 @@ impl AppModel {
                 .map_err(|err| format!("Autostart: {err}"));
         }
         result
+    }
+
+    /// Saves the classic interface as the choice and restarts into it; this
+    /// copy then exits. Returns a message for the user on failure.
+    pub fn switch_to_classic(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        let mut settings = self.settings.clone();
+        settings.modern_ui = false;
+        save_settings(&settings).map_err(|err| format!("Could not save the settings: {err}"))?;
+        self.settings = settings;
+        relaunch().map_err(|err| {
+            format!("Could not restart ({err}): the classic interface is used from the next start.")
+        })?;
+        cx.emit(ModelEvent::Exit);
+        Ok(())
     }
 
     /// Terminates the process(es) of `row`. Returns a message for the user

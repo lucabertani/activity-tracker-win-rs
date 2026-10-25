@@ -8,7 +8,7 @@ use gpui_kit::component::color_picker::{ColorPicker, ColorPickerEvent, ColorPick
 use gpui_kit::component::input::{InputEvent, InputState, NumberInput};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme, IconName, IndexPath, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, IconName, IndexPath, Sizable, WindowExt, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, Hsla, IntoElement, ParentElement,
@@ -18,6 +18,7 @@ use tracker_core::model::{
     AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_FONT_WEIGHT,
     DEFAULT_TRAY_ICON_FONT_SIZE, DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG,
 };
+use tracker_platform::restart::switch_prompt;
 use tracker_platform::tray::{IconPixels, cpu_icon_pixels, ram_icon_pixels};
 
 use crate::model::AppModel;
@@ -183,6 +184,28 @@ impl SettingsPanel {
         cx.notify();
     }
 
+    /// Asks to restart into the classic interface; the switch keeps showing
+    /// "on" until the restart happens.
+    fn confirm_switch_to_classic(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let model = self.model.clone();
+        let (title, text) = switch_prompt(false);
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let model = model.clone();
+            alert
+                .title(title)
+                .description(text)
+                .confirm()
+                .ok_text("Restart")
+                .on_ok(move |_, window, cx| {
+                    if let Err(message) = model.update(cx, |model, cx| model.switch_to_classic(cx))
+                    {
+                        window.push_notification(message, cx);
+                    }
+                    true
+                })
+        });
+    }
+
     fn restore_defaults(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let defaults = AppSettings::default();
         self.change(window, cx, |s| {
@@ -267,6 +290,7 @@ fn row(label: impl Into<SharedString>, control: impl IntoElement) -> impl IntoEl
 impl Render for SettingsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = self.settings(cx).clone();
+        let can_switch_ui = self.model.read(cx).can_switch_ui;
         let theme = cx.theme().clone();
         let switch = |id: &'static str, checked: bool, edit: fn(&mut AppSettings, bool)| {
             Switch::new(id).checked(checked).on_click(cx.listener(
@@ -318,6 +342,27 @@ impl Render for SettingsPanel {
                     .px_4()
                     .pb_4()
                     .gap_1()
+                    .when(can_switch_ui, |this| {
+                        this.child(section("Interface", cx)).child(
+                            v_flex()
+                                .child(row(
+                                    "New interface",
+                                    Switch::new("modern-ui").checked(true).on_click(
+                                        cx.listener(|this, _: &bool, window, cx| {
+                                            this.confirm_switch_to_classic(window, cx)
+                                        }),
+                                    ),
+                                ))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(
+                                            "Turn off for the lighter classic window                                              (less RAM and CPU). Restarts the app.",
+                                        ),
+                                ),
+                        )
+                    })
                     .child(section("General", cx))
                     .child(row(
                         "Start with Windows",

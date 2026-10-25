@@ -67,9 +67,37 @@ A finestra aperta e senza tick la GUI GPUI consuma ~190 ms ogni 20 s; il
 resto è il ridisegno della tabella a ogni aggiornamento. Possibile
 ottimizzazione futura: ridisegnare solo se le righe visibili cambiano.
 
-Limite noto: con GPUI compilato l'exe usa il manifest DPI-aware di gpui,
-quindi anche la GUI legacy (`--legacy-ui`) diventa DPI-aware; il suo layout
-a pixel fissi appare più piccolo con scaling > 100%.
+### Scelta della GUI dalle impostazioni (dopo le misure)
+
+Visti i consumi, l'exe resta unico ma la GUI si sceglie dalle impostazioni
+(`modern_ui` in `settings.json`, default `true`):
+
+- GPUI: switch "New interface" nella sezione "Interface" del pannello;
+  spegnerlo apre un dialog di conferma (AlertDialog di gpui-component).
+- Win32: checkbox "Use the new interface" nella scheda General; spuntarla
+  apre un MessageBox Sì/No.
+- Confermando, l'impostazione viene salvata e
+  `tracker_platform::restart::relaunch` avvia una nuova copia, mentre questa
+  esce dal percorso di "Exit" (le icone del tray vengono rimosse). La copia
+  mostra la finestra (niente `--background`), ignora `--legacy-ui` e riceve
+  `--no-elevate`: eredita già il token elevato, e un UAC rifiutato non viene
+  richiesto di nuovo.
+- Annullando non cambia nulla.
+- `--legacy-ui` forza ancora la classica per una singola esecuzione; il
+  fallback automatico resta.
+- Il controllo compare solo se entrambe le GUI sono compilate
+  (`Startup::can_switch_ui`).
+
+Misurato: la GUI classica dentro l'exe unico occupa 16 MB di working set
+(3 MB privati), come prima. Verificato con messaggi Win32 il passaggio
+classica → nuova (dialog, salvataggio, riavvio con GPUI). Il passaggio
+nuova → classica richiede un click nel dialog GPUI ed è da provare a mano.
+
+DPI: con GPUI compilato l'exe usa il manifest DPI-aware di gpui, quindi la
+GUI Win32 ora imposta per il proprio thread
+`DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED` (con fallback a `UNAWARE`).
+Windows la scala come nella build solo-Win32, invece di mostrarla
+rimpicciolita.
 
 
 Il documento ha due parti indipendenti:

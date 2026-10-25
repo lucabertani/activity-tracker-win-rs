@@ -61,9 +61,15 @@ Code layout (Cargo workspace):
    optional flags:
    - `--background`: start hidden in the tray;
    - `--legacy-ui`: use the classic Win32 window instead of the GPUI one
-     (the app also falls back to it automatically when GPUI cannot start,
-     e.g. without a DirectX 11 capable GPU);
+     for this run (the app also falls back to it automatically when GPUI
+     cannot start, e.g. without a DirectX 11 capable GPU);
    - `--no-elevate`: never ask for elevation (no temperatures).
+
+**New or classic interface.** The GPUI window looks better but costs
+about 120 MB of RAM; the classic Win32 window needs about 16 MB and less
+CPU. Switch in the settings ("New interface" in the GPUI panel, "Use the new
+interface" in the classic window): after you confirm, the app saves the
+choice and restarts itself with the other interface.
 
 Closing or minimizing the window sends the app to the tray. The GPUI window
 is actually closed then and recreated on the next double-click.

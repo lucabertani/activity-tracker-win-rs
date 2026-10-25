@@ -221,6 +221,10 @@ pub struct AppSettings {
     /// Font weight for the tray icons' text (Segoe UI scale).
     #[serde(default = "default_font_weight")]
     pub tray_icon_font_weight: u32,
+    /// Use the GPUI interface; `false` selects the lighter classic Win32
+    /// window. Only meaningful when both frontends are compiled in.
+    #[serde(default = "default_true")]
+    pub modern_ui: bool,
 }
 
 fn default_true() -> bool {
@@ -279,6 +283,7 @@ impl Default for AppSettings {
             tray_icon_cpu_fg: DEFAULT_TRAY_CPU_FG,
             tray_icon_font_size: DEFAULT_TRAY_ICON_FONT_SIZE,
             tray_icon_font_weight: DEFAULT_TRAY_FONT_WEIGHT,
+            modern_ui: true,
         }
     }
 }

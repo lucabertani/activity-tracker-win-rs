@@ -10,10 +10,14 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::{
     LVIF_TEXT, LVN_GETDISPINFOW, LVN_ITEMACTIVATE, NMLISTVIEW, NMLVDISPINFOW,
 };
+use windows_sys::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT_UNAWARE, DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED,
+    SetThreadDpiAwarenessContext,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, CREATESTRUCTW, DefWindowProcW, DestroyWindow, DispatchMessageW, EN_CHANGE,
     GWLP_USERDATA, GetCursorPos, GetDlgCtrlID, GetMessageW, KillTimer, MB_ICONERROR, MB_OK, MSG,
-    MessageBoxW, PostQuitMessage, SetTimer, SetWindowLongPtrW, TranslateMessage, WM_CLOSE,
+    MessageBoxW, PostQuitMessage, SetTimer, SetWindowLongPtrW, TranslateMessage, WM_APP, WM_CLOSE,
     WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NOTIFY,
     WM_RBUTTONUP, WM_SIZE, WM_TIMER,
 };
@@ -36,6 +40,21 @@ use tracker_platform::tray::{TrayIcons, WM_TRAYICON};
 use tracker_platform::tray_menu::{CMD_EXIT_APP, CMD_OPEN_WINDOW, show_tray_context_menu};
 
 const TIMER_REFRESH_ID: usize = 1;
+/// Posted to the main window to quit (e.g. after restarting into the other
+/// interface): same path as "Exit" in the tray menu.
+pub(crate) const WM_APP_EXIT: u32 = WM_APP + 10;
+
+/// The fixed-pixel layout predates DPI awareness: when the exe manifest
+/// (embedded by GPUI) declares per-monitor awareness, let Windows scale this
+/// thread's windows instead, as in the Win32-only build. GDI text stays
+/// sharp with the GDI-scaled context (Windows 10 1809+).
+fn use_system_dpi_scaling() {
+    unsafe {
+        if SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED).is_null() {
+            let _ = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE);
+        }
+    }
+}
 
 pub(crate) struct AppState {
     pub(crate) settings: AppSettings,
@@ -45,11 +64,13 @@ pub(crate) struct AppState {
     window_bg_brush: HBRUSH,
     tray: TrayIcons,
     pub(crate) settings_window: HWND,
+    /// The GPUI interface is compiled in: settings offer to switch to it.
+    pub(crate) can_switch_ui: bool,
     notify_text_buf: Vec<u16>,
 }
 
 impl AppState {
-    fn new(settings: AppSettings) -> Self {
+    fn new(settings: AppSettings, can_switch_ui: bool) -> Self {
         Self {
             settings,
             processes: ProcessList::new(),
@@ -60,12 +81,15 @@ impl AppState {
             window_bg_brush: unsafe { CreateSolidBrush(crate::window::APP_WINDOW_BG_COLOR) },
             tray: TrayIcons::default(),
             settings_window: std::ptr::null_mut(),
+            can_switch_ui,
             notify_text_buf: Vec::new(),
         }
     }
 }
 
 pub fn run(startup: Startup) -> AppResult<()> {
+    use_system_dpi_scaling();
+
     let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) } as HINSTANCE;
     if hinstance.is_null() {
         return Err(AppError::WinApi("GetModuleHandleW failed"));
@@ -79,7 +103,7 @@ pub fn run(startup: Startup) -> AppResult<()> {
         return Err(AppError::WinApi("RegisterClassW (settings) failed"));
     }
 
-    let boxed_state = Box::new(AppState::new(startup.settings));
+    let boxed_state = Box::new(AppState::new(startup.settings, startup.can_switch_ui));
     let state_ptr = Box::into_raw(boxed_state);
 
     let hwnd = create_main_window(hinstance, state_ptr as isize);
@@ -226,6 +250,10 @@ unsafe extern "system" fn wnd_proc(
         WM_CLOSE => {
             // Keep process alive and only hide window.
             hide_main_window(hwnd);
+            0
+        }
+        WM_APP_EXIT => {
+            let _ = DestroyWindow(hwnd);
             0
         }
         WM_TRAYICON => {

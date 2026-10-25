@@ -36,7 +36,12 @@ pub fn run(startup: Startup) -> AppResult<()> {
             gpui_kit::init(cx);
             theme::init(cx);
 
-            let model = AppModel::new(startup.settings.clone(), !startup.start_hidden, cx);
+            let model = AppModel::new(
+                startup.settings.clone(),
+                !startup.start_hidden,
+                startup.can_switch_ui,
+                cx,
+            );
             let shell = Shell::new(model.clone(), cx);
             cx.set_global(ShellGlobal(shell.clone()));
 
