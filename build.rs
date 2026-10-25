@@ -1,5 +1,9 @@
 fn main() {
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+    // With the GPUI frontend, gpui embeds its own manifest (also asInvoker,
+    // plus per-monitor DPI awareness and Common Controls v6): a second one
+    // fails the link with a duplicate MANIFEST resource.
+    let gpui = std::env::var_os("CARGO_FEATURE_GUI_GPUI").is_some();
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") && !gpui {
         winresource::WindowsResource::new()
             .set_manifest(
                 r#"<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">

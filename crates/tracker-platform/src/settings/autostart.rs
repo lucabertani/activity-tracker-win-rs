@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::error::{AppError, AppResult};
 use winreg::RegKey;
@@ -21,6 +21,8 @@ pub fn set_autostart(enabled: bool, background: bool, exe_path: &Path) -> AppRes
                 "/Create", "/F", "/SC", "ONLOGON", "/TN", APP_NAME, "/TR", &action, "/RL",
                 "HIGHEST",
             ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()?;
         if !status.success() {
             return Err(AppError::InvalidSetting(
@@ -31,6 +33,8 @@ pub fn set_autostart(enabled: bool, background: bool, exe_path: &Path) -> AppRes
     } else if task_exists() {
         let status = Command::new("schtasks.exe")
             .args(["/Delete", "/F", "/TN", APP_NAME])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()?;
         if !status.success() {
             return Err(AppError::InvalidSetting(
@@ -54,6 +58,8 @@ pub fn set_autostart(enabled: bool, background: bool, exe_path: &Path) -> AppRes
 fn task_exists() -> bool {
     Command::new("schtasks.exe")
         .args(["/Query", "/TN", APP_NAME])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)

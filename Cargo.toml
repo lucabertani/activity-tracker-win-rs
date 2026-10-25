@@ -12,6 +12,7 @@ edition = "2024"
 tracker-core = { path = "crates/tracker-core" }
 tracker-platform = { path = "crates/tracker-platform" }
 tracker-gui-win32 = { path = "crates/tracker-gui-win32" }
+tracker-gui-gpui = { path = "crates/tracker-gui-gpui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -42,14 +43,18 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["gui-win32"]
-# Legacy GUI built on the standard Win32 controls (also the runtime fallback).
+default = ["gui-gpui", "gui-win32"]
+# GPU-rendered GUI (GPUI): the default frontend.
+gui-gpui = ["dep:tracker-gui-gpui"]
+# Legacy GUI built on the standard Win32 controls: `--legacy-ui`, and the
+# automatic fallback when GPUI cannot start.
 gui-win32 = ["dep:tracker-gui-win32"]
 
 [dependencies]
 tracker-core.workspace = true
 tracker-platform.workspace = true
 tracker-gui-win32 = { workspace = true, optional = true }
+tracker-gui-gpui = { workspace = true, optional = true }
 windows-sys.workspace = true
 
 [dev-dependencies]

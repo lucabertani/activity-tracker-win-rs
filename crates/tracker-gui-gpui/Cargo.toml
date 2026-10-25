@@ -1,0 +1,13 @@
+[package]
+name = "tracker-gui-gpui"
+description = "GPU-rendered GUI built on GPUI (gpui-kit)."
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tracker-core.workspace = true
+tracker-platform.workspace = true
+# Exact pins: GPUI has no stable API yet, upgrades must be deliberate.
+gpui-kit = "=0.8.0"
+image = "0.25"
+raw-window-handle = "0.6"

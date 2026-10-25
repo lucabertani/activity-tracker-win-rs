@@ -1,7 +1,14 @@
-# Activity Tracker (Win32 + Rust)
+# Activity Tracker (Rust)
 
 Monitor total RAM usage, average CPU core temperature and per-core thermal
 throttling (HWiNFO-style) from the system tray.
+
+The window is GPU-rendered with [GPUI](https://www.gpui.rs) (Zed's UI
+framework, via [gpui-kit](https://github.com/longbridge/gpui-kit)): native
+code, no web engine. Processes are grouped by name; click a column's sort
+icon to sort, double-click a group (or press Enter) to expand it, `Del`
+terminates the selection, `Ctrl+F` searches. Settings open in a side panel
+and apply immediately.
 
 > **Don't want to compile?** Grab the prebuilt executable from the
 > [latest release](https://github.com/lucabertani/activity-tracker-win-rs/releases/latest)
@@ -25,6 +32,23 @@ cargo build --release
 Resulting executable: `target\release\activity-tracker-win-rs.exe`
 (self-contained, no VC++ redistributable needed).
 
+The first build compiles GPUI and takes a few minutes. To build only the
+small legacy Win32 GUI:
+
+```bash
+cargo build --release --no-default-features --features gui-win32
+```
+
+Code layout (Cargo workspace):
+
+| Crate | Contents |
+|---|---|
+| `crates/tracker-core` | model, process rows, list state (search/sort/groups): no OS, no GUI |
+| `crates/tracker-platform` | Windows: monitors, MSR driver access, sampler thread, settings, autostart, elevation, tray |
+| `crates/tracker-gui-gpui` | the GPUI frontend (default) |
+| `crates/tracker-gui-win32` | the legacy Win32 frontend (fallback) |
+| root package | `main.rs`: elevation, frontend selection |
+
 ## Run
 
 1. Double-click `target\release\activity-tracker-win-rs.exe`. If the
@@ -33,8 +57,16 @@ Resulting executable: `target\release\activity-tracker-win-rs.exe`
    run without them.
 2. The main window opens. If you don't see it: look for the icon in the
    tray (the `^` arrow next to the clock) and double-click it.
-3. From a terminal: `target\release\activity-tracker-win-rs.exe`
-   (add `--background` to start hidden in the tray).
+3. From a terminal: `target\release\activity-tracker-win-rs.exe`, with
+   optional flags:
+   - `--background`: start hidden in the tray;
+   - `--legacy-ui`: use the classic Win32 window instead of the GPUI one
+     (the app also falls back to it automatically when GPUI cannot start,
+     e.g. without a DirectX 11 capable GPU);
+   - `--no-elevate`: never ask for elevation (no temperatures).
+
+Closing or minimizing the window sends the app to the tray. The GPUI window
+is actually closed then and recreated on the next double-click.
 
 ## CPU temperature and thermal throttling (driver)
 
@@ -77,6 +109,7 @@ MSRs of every physical core twice a second, like HWiNFO:
 ```bash
 cargo test                          # unit/integration tests
 cargo run --example msr_probe       # per-core status bits, temperatures, clocks (requires the driver + admin)
+cargo run --example tray_probe      # tray host thread alone
 ```
 
 ## Notes

@@ -12,6 +12,8 @@ pub enum AppError {
     WinApi(&'static str),
     #[error("Invalid setting: {0}")]
     InvalidSetting(String),
+    #[error("GUI error: {0}")]
+    Gui(String),
 }
 
 pub type AppResult<T> = Result<T, AppError>;

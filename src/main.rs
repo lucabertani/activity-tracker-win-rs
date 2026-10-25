@@ -15,7 +15,10 @@ use tracker_platform::startup::{ARG_NO_ELEVATE, has_arg};
 fn main() {
     // GUI app without console: surface panics and startup errors in a
     // message box instead of failing silently on double-click.
-    std::panic::set_hook(Box::new(|info| {
+    // The default hook still prints to stderr (visible from a terminal).
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_hook(info);
         let message = format!(
             "Unexpected error:\n{info}\n\nRestart the application. If the problem persists, report this text."
         );
@@ -34,9 +37,45 @@ fn main() {
     }
 }
 
-#[cfg(all(target_os = "windows", feature = "gui-win32"))]
+/// Force the legacy Win32 GUI.
+#[cfg(target_os = "windows")]
+const ARG_LEGACY_UI: &str = "--legacy-ui";
+
+/// Picks the frontend: GPUI unless `--legacy-ui` is given (or GPUI is not
+/// compiled in); falls back to the Win32 GUI when GPUI cannot start (e.g.
+/// no usable DirectX 11 device).
+#[cfg(target_os = "windows")]
 fn run_gui(startup: tracker_platform::startup::Startup) -> tracker_core::error::AppResult<()> {
-    tracker_gui_win32::run(startup)
+    #[cfg(feature = "gui-gpui")]
+    if !(cfg!(feature = "gui-win32") && has_arg(ARG_LEGACY_UI)) {
+        let settings = startup.settings.clone();
+        let start_hidden = startup.start_hidden;
+        match tracker_gui_gpui::run(startup) {
+            Ok(()) => return Ok(()),
+            #[cfg(feature = "gui-win32")]
+            Err(_) => {
+                return tracker_gui_win32::run(tracker_platform::startup::Startup {
+                    settings,
+                    start_hidden,
+                });
+            }
+            #[cfg(not(feature = "gui-win32"))]
+            Err(err) => {
+                let _ = (settings, start_hidden);
+                return Err(err);
+            }
+        }
+    }
+
+    #[cfg(feature = "gui-win32")]
+    {
+        tracker_gui_win32::run(startup)
+    }
+    #[cfg(not(feature = "gui-win32"))]
+    {
+        let _ = startup;
+        Err(tracker_core::error::AppError::WinApi("no GUI compiled in"))
+    }
 }
 
 #[cfg(target_os = "windows")]

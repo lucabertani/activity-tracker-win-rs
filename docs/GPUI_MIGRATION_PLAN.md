@@ -24,11 +24,36 @@ Avanzamento:
       Conseguenza: quando va nel tray la finestra GPUI viene *chiusa*
       (non solo nascosta) e ricreata all'apertura.
 - [x] Fase 1 — workspace a crate, GUI legacy su `tracker-core`.
-- [ ] Fase 2 — sampler/runtime condiviso, tray host su thread.
-- [ ] Fase 3 — finestra principale GPUI.
-- [ ] Fase 4 — pannello settings GPUI.
-- [ ] Fase 5 — rifinitura (tema, titlebar custom, shortcut).
-- [ ] Fase 6 — pulizia, README, CI.
+- [x] Fase 2 — `Sampler` (thread di campionamento con pausa dell'elenco
+      processi a finestra chiusa), `TrayHost` (tray su thread dedicato,
+      ri-aggiunge le icone se Explorer riparte), `TrayIcons` condiviso.
+- [x] Fase 3 — finestra principale GPUI: titlebar custom, card
+      RAM/CPU/throttling, ricerca, `DataTable` virtualizzata con sort
+      dall'header (pulsanti di sort rimossi), gruppi espandibili, selezione
+      stabile per identità, Terminate (pulsante + `Del`), chiusura nel tray
+      e riapertura dal tray, Exit.
+- [x] Fase 4 — pannello impostazioni sovrapposto a destra, applicazione
+      immediata e salvataggio, anteprime icone identiche al tray.
+- [x] Fase 5 — tema chiaro/scuro che segue Windows, Segoe UI Variable,
+      shortcut (`Ctrl+F`, `Del`, `Enter`, `Ctrl+W`).
+- [x] Fase 6 — README; fallback automatico e `--legacy-ui`.
+
+Verifiche fatte (smoke test automatizzati con click/tastiera simulati e
+screenshot, `APPDATA` temporaneo per non toccare le impostazioni reali):
+avvio, espansione gruppo, ricerca, sort per nome, pannello impostazioni,
+salvataggio su file, chiusura nel tray, riapertura dal tray (una sola
+finestra), Exit dal menu del tray.
+
+Note emerse:
+
+- In questa versione il componente virtualizzato è `DataTable` (non
+  `Table`); il click sull'header cicla Default → Desc → Asc; "Default"
+  torna all'ordinamento dell'app (RAM decrescente).
+- `gpui-pre` incorpora già un manifest (asInvoker + DPI per-monitor +
+  Common Controls v6): `build.rs` aggiunge il nostro solo senza GPUI.
+- Chiudere la finestra GPUI libera solo una parte della memoria: il device
+  DirectX resta allocato a livello di processo.
+
 
 Il documento ha due parti indipendenti:
 
