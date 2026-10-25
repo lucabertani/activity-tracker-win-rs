@@ -11,7 +11,7 @@
 
 use std::mem;
 
-use windows_sys::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
     CreateSolidBrush, DeleteObject, HBRUSH, HDC, OPAQUE, SetBkMode, SetTextColor, UpdateWindow,
 };
@@ -21,21 +21,22 @@ use windows_sys::Win32::UI::Controls::Dialogs::{
 };
 use windows_sys::Win32::UI::Controls::{
     ICC_TAB_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, NMHDR, TCIF_TEXT, TCITEMW,
-    TCM_GETCURSEL, TCM_INSERTITEMW, TCN_SELCHANGE,
+    TCM_ADJUSTRECT, TCM_GETCURSEL, TCM_INSERTITEMW, TCN_SELCHANGE,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX, CB_ADDSTRING, CB_GETCURSEL,
-    CB_SETCURSEL, CBN_SELCHANGE, CBS_DROPDOWNLIST, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
-    CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, ES_AUTOHSCROLL, GWLP_HWNDPARENT,
-    GWLP_USERDATA, GetDlgCtrlID, GetDlgItem, GetWindowLongPtrW, HMENU, IDC_ARROW, LoadCursorW,
-    PostMessageW, RegisterClassW, STN_CLICKED, SW_HIDE, SW_RESTORE, SW_SHOW, SendMessageW,
-    SetForegroundWindow, SetWindowLongPtrW, SetWindowTextW, ShowWindow, WM_CLOSE, WM_COMMAND,
-    WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_NOTIFY, WNDCLASSW, WS_CAPTION, WS_CHILD,
-    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_EX_DLGMODALFRAME, WS_MINIMIZEBOX, WS_SYSMENU,
-    WS_TABSTOP, WS_VISIBLE,
+    AdjustWindowRectEx, BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX, CB_ADDSTRING,
+    CB_GETCURSEL, CB_SETCURSEL, CBN_SELCHANGE, CBS_DROPDOWNLIST, CREATESTRUCTW, CS_HREDRAW,
+    CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, ES_AUTOHSCROLL,
+    GWLP_HWNDPARENT, GWLP_USERDATA, GetDlgCtrlID, GetDlgItem, GetWindowLongPtrW, HMENU, IDC_ARROW,
+    LoadCursorW, PostMessageW, RegisterClassW, STN_CLICKED, SW_HIDE, SW_RESTORE, SW_SHOW,
+    SWP_NOMOVE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+    SetWindowTextW, ShowWindow, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORBTN, WM_CTLCOLORSTATIC,
+    WM_DESTROY, WM_NOTIFY, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT,
+    WS_EX_DLGMODALFRAME, WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
 use crate::app::{AppState, WM_APP_EXIT, refresh_tray_icons, restart_refresh_timer, show_error};
+use crate::style;
 use crate::window::{get_control_text, wide};
 use tracker_core::model::{
     AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_FONT_WEIGHT,
@@ -48,6 +49,8 @@ use tracker_platform::settings::store::save_settings;
 use tracker_platform::tray::{build_cpu_icon, build_ram_icon, destroy_icon};
 
 pub const SETTINGS_CLASS: &str = "ActivityTrackerSettingsWindow";
+const CLIENT_WIDTH: i32 = 480;
+const CLIENT_HEIGHT: i32 = 380;
 
 // Constants not exposed by windows-sys 0.61 (stable Win32 values).
 const STM_SETIMAGE: u32 = 0x0172;
@@ -132,7 +135,7 @@ pub fn register_settings_window_class(hinstance: HINSTANCE) -> bool {
         hInstance: hinstance,
         hIcon: std::ptr::null_mut(),
         hCursor: unsafe { LoadCursorW(std::ptr::null_mut(), IDC_ARROW) },
-        hbrBackground: unsafe { CreateSolidBrush(0x00F0F0F0) as HBRUSH },
+        hbrBackground: style::bg_brush(),
         lpszMenuName: std::ptr::null_mut(),
         lpszClassName: class_name.as_ptr(),
     };
@@ -156,16 +159,29 @@ pub(crate) fn open_settings(hwnd_main: HWND, state: &mut AppState) {
     let data = Box::new(SettingsData::new(state as *mut AppState));
     let ptr = Box::into_raw(data);
 
+    let ex_style = WS_EX_CONTROLPARENT | WS_EX_DLGMODALFRAME;
+    let style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
+    // The layout is in client coordinates: size the frame around it.
+    let mut frame = RECT {
+        left: 0,
+        top: 0,
+        right: CLIENT_WIDTH,
+        bottom: CLIENT_HEIGHT,
+    };
+    unsafe {
+        AdjustWindowRectEx(&mut frame, style, 0, ex_style);
+    }
+
     let hwnd = unsafe {
         CreateWindowExW(
-            WS_EX_CONTROLPARENT | WS_EX_DLGMODALFRAME,
+            ex_style,
             class_name.as_ptr(),
             title.as_ptr(),
-            WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,
+            style,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            500,
-            448,
+            frame.right - frame.left,
+            frame.bottom - frame.top,
             hwnd_main,
             std::ptr::null_mut(),
             GetModuleHandleW(std::ptr::null()) as HINSTANCE,
@@ -199,6 +215,8 @@ unsafe extern "system" fn wnd_proc(
 
             let data = &mut *data;
             create_controls(hwnd, data);
+            style::set_font_on_children(hwnd, style::ui_font());
+            fit_tab_strip(hwnd);
             sync_controls(hwnd, data);
             show_page(hwnd, data, 0);
             0
@@ -270,8 +288,9 @@ unsafe extern "system" fn wnd_proc(
                 SetTextColor(wparam as HDC, 0);
                 return data.swatch_brushes[index] as LRESULT;
             }
-            DefWindowProcW(hwnd, msg, wparam, lparam)
+            style::paint_on_background(wparam as HDC, style::TEXT_COLOR)
         }
+        WM_CTLCOLORBTN => style::paint_on_background(wparam as HDC, style::TEXT_COLOR),
         WM_CLOSE => {
             DestroyWindow(hwnd);
             0
@@ -334,9 +353,9 @@ fn create_controls(hwnd: HWND, data: &mut SettingsData) {
             std::ptr::null_mut(),
             WS_CHILD | WS_VISIBLE,
             12,
-            12,
-            476,
-            310,
+            10,
+            CLIENT_WIDTH - 24,
+            28,
             hwnd,
             IDC_TAB as HMENU,
             hinstance,
@@ -344,11 +363,7 @@ fn create_controls(hwnd: HWND, data: &mut SettingsData) {
         );
 
         for index in 0..2 {
-            let mut text = wide(if index == 0 {
-                "General"
-            } else {
-                "Tray icons & colors"
-            });
+            let mut text = wide(if index == 0 { "General" } else { "Tray icons" });
             let mut item = TCITEMW {
                 mask: TCIF_TEXT,
                 pszText: text.as_mut_ptr(),
@@ -539,10 +554,10 @@ fn create_controls(hwnd: HWND, data: &mut SettingsData) {
         hinstance,
         &class_checkbox,
         "Close",
-        398,
-        328,
+        CLIENT_WIDTH - 12 - 90,
+        CLIENT_HEIGHT - 12 - 28,
         90,
-        26,
+        28,
         IDC_BTN_CLOSE,
     );
 }
@@ -695,6 +710,33 @@ fn create_icon_preview(hwnd: HWND, id: i32, x: i32, y: i32) -> HWND {
             GetModuleHandleW(std::ptr::null()) as HINSTANCE,
             std::ptr::null_mut(),
         )
+    }
+}
+
+/// Shrinks the tab control to its row of tabs: its (white) page body
+/// would clash with the gray window, and the pages live on the window
+/// anyway. Call after the font is set, which decides the tab height.
+fn fit_tab_strip(hwnd: HWND) {
+    unsafe {
+        let tab = GetDlgItem(hwnd, IDC_TAB);
+        let mut body = RECT {
+            left: 0,
+            top: 0,
+            right: CLIENT_WIDTH - 24,
+            bottom: 200,
+        };
+        SendMessageW(tab, TCM_ADJUSTRECT, 0, &mut body as *mut RECT as isize);
+        // `body.top` is where the page starts, a few pixels below the tabs.
+        let height = (body.top - 2).max(20);
+        SetWindowPos(
+            tab,
+            std::ptr::null_mut(),
+            0,
+            0,
+            CLIENT_WIDTH - 24,
+            height,
+            SWP_NOMOVE | SWP_NOZORDER,
+        );
     }
 }
 

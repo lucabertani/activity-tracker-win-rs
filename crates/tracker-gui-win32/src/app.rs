@@ -3,9 +3,7 @@
 use std::mem;
 
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{
-    CreateSolidBrush, DeleteObject, HBRUSH, HDC, SetBkMode, SetTextColor, TRANSPARENT,
-};
+use windows_sys::Win32::Graphics::Gdi::HDC;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::{
     LVIF_TEXT, LVN_GETDISPINFOW, LVN_ITEMACTIVATE, NMLISTVIEW, NMLVDISPINFOW,
@@ -18,11 +16,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, CREATESTRUCTW, DefWindowProcW, DestroyWindow, DispatchMessageW, EN_CHANGE,
     GWLP_USERDATA, GetCursorPos, GetDlgCtrlID, GetMessageW, KillTimer, MB_ICONERROR, MB_OK, MSG,
     MessageBoxW, PostQuitMessage, SetTimer, SetWindowLongPtrW, TranslateMessage, WM_APP, WM_CLOSE,
-    WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NOTIFY,
-    WM_RBUTTONUP, WM_SIZE, WM_TIMER,
+    WM_COMMAND, WM_CREATE, WM_CTLCOLORBTN, WM_CTLCOLORSTATIC, WM_DESTROY, WM_LBUTTONDBLCLK,
+    WM_NOTIFY, WM_RBUTTONUP, WM_SIZE, WM_TIMER,
 };
 
 use crate::settings_window::{open_settings, register_settings_window_class};
+use crate::style;
 use crate::window::{
     IDC_HEADER_CPU_TEMP, IDC_HEADER_CPU_THROTTLE, IDC_HEADER_RAM, IDC_PROCESS_LIST, IDC_SEARCH,
     IDC_SETTINGS_BUTTON, IDC_SORT_MEMORY, IDC_SORT_NAME, IDC_TERMINATE_PROCESS, create_controls,
@@ -61,7 +60,6 @@ pub(crate) struct AppState {
     processes: ProcessList,
     pub(crate) current_ram_percent: u32,
     pub(crate) cpu_monitor: CpuThrottleMonitor,
-    window_bg_brush: HBRUSH,
     tray: TrayIcons,
     pub(crate) settings_window: HWND,
     /// The GPUI interface is compiled in: settings offer to switch to it.
@@ -78,7 +76,6 @@ impl AppState {
             cpu_monitor: CpuThrottleMonitor::new(),
             // Same color as the window background: used as the background
             // brush when painting the red throttling label.
-            window_bg_brush: unsafe { CreateSolidBrush(crate::window::APP_WINDOW_BG_COLOR) },
             tray: TrayIcons::default(),
             settings_window: std::ptr::null_mut(),
             can_switch_ui,
@@ -282,10 +279,6 @@ unsafe extern "system" fn wnd_proc(
                     as *mut AppState;
             if !state_ptr.is_null() {
                 (*state_ptr).tray.remove_all(hwnd);
-                if !(*state_ptr).window_bg_brush.is_null() {
-                    let _ = DeleteObject((*state_ptr).window_bg_brush);
-                    (*state_ptr).window_bg_brush = std::ptr::null_mut();
-                }
                 let _ = Box::from_raw(state_ptr);
                 let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             }
@@ -293,21 +286,18 @@ unsafe extern "system" fn wnd_proc(
             PostQuitMessage(0);
             0
         }
-        WM_CTLCOLORSTATIC => {
-            // Color the throttling warning label red; keep everything else default.
+        WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
+            // Labels on the window background; the throttling warning in red.
             let control = lparam as HWND;
-            if !control.is_null()
-                && unsafe { GetDlgCtrlID(control) } == IDC_HEADER_CPU_THROTTLE
-                && let Some(state) = get_state_mut(hwnd)
-            {
-                unsafe {
-                    // COLORREF format is 0x00BBGGRR: red.
-                    SetTextColor(wparam as HDC, 0x0000FF);
-                    SetBkMode(wparam as HDC, TRANSPARENT as i32);
-                }
-                return state.window_bg_brush as LRESULT;
-            }
-            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+            let warning = !control.is_null() && GetDlgCtrlID(control) == IDC_HEADER_CPU_THROTTLE;
+            style::paint_on_background(
+                wparam as HDC,
+                if warning {
+                    style::WARNING_COLOR
+                } else {
+                    style::TEXT_COLOR
+                },
+            )
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
@@ -342,7 +332,7 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
     // Average core temperature: only available on the MSR (driver) path.
     let cpu_temp = state.cpu_monitor.status().avg_temp_c;
     let cpu_temp_label = match cpu_temp {
-        Some(t) => format!("CPU avg: {:.0} C", t),
+        Some(t) => format!("CPU avg: {:.0} °C", t),
         None => "CPU avg: n/a".to_string(),
     };
     set_label_text(hwnd, IDC_HEADER_CPU_TEMP, &cpu_temp_label);
@@ -352,7 +342,7 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
     set_label_text(
         hwnd,
         IDC_HEADER_CPU_THROTTLE,
-        if cpu_throttling { "T" } else { "" },
+        if cpu_throttling { "Throttling" } else { "" },
     );
 
     let memory = if let Some((ram_percent, total, available)) = ram_status {
@@ -361,7 +351,7 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
         set_label_text(
             hwnd,
             IDC_HEADER_RAM,
-            &format!("Total RAM used: {}%", state.current_ram_percent),
+            &format!("RAM used: {}%", state.current_ram_percent),
         );
         Some((total, total.saturating_sub(available)))
     } else {

@@ -9,6 +9,7 @@
 
 mod app;
 mod settings_window;
+mod style;
 mod window;
 
 pub use app::run;

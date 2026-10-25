@@ -1,7 +1,7 @@
 use std::mem;
 
+use crate::style;
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{CreateSolidBrush, HBRUSH};
 use windows_sys::Win32::UI::Controls::{
     ICC_LISTVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, LVCF_FMT, LVCF_TEXT,
     LVCF_WIDTH, LVCFMT_LEFT, LVCOLUMNW, LVIF_STATE, LVIS_FOCUSED, LVIS_SELECTED, LVITEMW,
@@ -13,8 +13,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW,
     LoadCursorW, RegisterClassW, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOMOVE, SWP_NOSIZE,
     SendMessageW, SetForegroundWindow, SetWindowPos, SetWindowTextW, ShowWindow, WNDCLASSW,
-    WS_BORDER, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP,
-    WS_VISIBLE,
+    WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 pub const IDC_HEADER_RAM: i32 = 2001;
@@ -26,8 +25,6 @@ pub const IDC_SORT_NAME: i32 = 2003;
 pub const IDC_SORT_MEMORY: i32 = 2004;
 pub const IDC_PROCESS_LIST: i32 = 2005;
 pub const IDC_TERMINATE_PROCESS: i32 = 2010;
-// COLORREF format is 0x00BBGGRR.
-pub const APP_WINDOW_BG_COLOR: u32 = 0x00F0F0F0; // #f0f0f0
 
 pub const MAIN_CLASS: &str = "ActivityTrackerMainWindow";
 
@@ -44,7 +41,7 @@ pub fn register_main_window_class(
         hInstance: hinstance,
         hIcon: std::ptr::null_mut(),
         hCursor: unsafe { LoadCursorW(std::ptr::null_mut(), IDC_ARROW) },
-        hbrBackground: unsafe { CreateSolidBrush(APP_WINDOW_BG_COLOR) as HBRUSH },
+        hbrBackground: style::bg_brush(),
         lpszMenuName: std::ptr::null(),
         lpszClassName: class_name.as_ptr(),
     };
@@ -54,7 +51,7 @@ pub fn register_main_window_class(
 
 pub fn create_main_window(hinstance: HINSTANCE, lp_param: isize) -> HWND {
     let class_name = wide(MAIN_CLASS);
-    let title = wide("Activity Tracker (Win32 + Rust)");
+    let title = wide("Activity Tracker");
 
     unsafe {
         CreateWindowExW(
@@ -85,11 +82,11 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
         create_label(
             hwnd,
             hinstance,
-            "Total RAM used: 0%",
+            "RAM used: 0%",
             20,
-            20,
-            350,
-            20,
+            18,
+            170,
+            24,
             IDC_HEADER_RAM,
         );
         // Average per-core temperature; "n/a" while the PawnIO driver is missing.
@@ -97,10 +94,10 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
             hwnd,
             hinstance,
             "CPU avg: n/a",
-            360,
-            20,
             200,
-            20,
+            18,
+            170,
+            24,
             IDC_HEADER_CPU_TEMP,
         );
         // Red "T" next to the CPU temperature, shown only while thermal-throttling.
@@ -108,10 +105,10 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
             hwnd,
             hinstance,
             "",
-            470,
-            20,
-            20,
-            20,
+            380,
+            18,
+            120,
+            24,
             IDC_HEADER_CPU_THROTTLE,
         );
         create_button(
@@ -119,21 +116,21 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
             hinstance,
             "Settings",
             580,
-            16,
+            15,
             104,
-            26,
+            28,
             IDC_SETTINGS_BUTTON,
         );
-        create_label(hwnd, hinstance, "Search processes:", 20, 60, 140, 22, 0);
+        create_label(hwnd, hinstance, "Search:", 20, 62, 55, 20, 0);
 
         let _ = CreateWindowExW(
             WS_EX_CLIENTEDGE,
             wide("EDIT").as_ptr(),
             wide("").as_ptr(),
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | (ES_AUTOHSCROLL as u32),
-            165,
+            80,
             58,
-            190,
+            275,
             24,
             hwnd,
             menu_id(IDC_SEARCH),
@@ -141,12 +138,12 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
             std::ptr::null(),
         );
 
-        create_button(hwnd, hinstance, "Sort Name", 360, 58, 85, 24, IDC_SORT_NAME);
+        create_button(hwnd, hinstance, "Sort Name", 365, 58, 85, 24, IDC_SORT_NAME);
         create_button(
             hwnd,
             hinstance,
             "Sort RAM",
-            450,
+            455,
             58,
             85,
             24,
@@ -156,9 +153,9 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
             hwnd,
             hinstance,
             "Terminate process",
-            540,
+            545,
             58,
-            144,
+            139,
             24,
             IDC_TERMINATE_PROCESS,
         );
@@ -169,7 +166,6 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
             std::ptr::null(),
             WS_CHILD
                 | WS_VISIBLE
-                | WS_BORDER
                 | WS_CLIPSIBLINGS
                 | LVS_REPORT
                 | LVS_SHOWSELALWAYS
@@ -192,6 +188,14 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
         );
 
         add_listview_columns(list);
+
+        style::set_font_on_children(hwnd, style::ui_font());
+        for id in [IDC_HEADER_RAM, IDC_HEADER_CPU_TEMP, IDC_HEADER_CPU_THROTTLE] {
+            style::set_font(
+                windows_sys::Win32::UI::WindowsAndMessaging::GetDlgItem(hwnd, id),
+                style::header_font(),
+            );
+        }
     }
 }
 
