@@ -8,9 +8,12 @@
 
 pub mod elevation;
 pub mod monitor;
+pub mod sampler;
 pub mod settings;
 pub mod startup;
 pub mod tray;
+pub mod tray_host;
+pub mod tray_menu;
 
 // Re-exported so the modules here keep using `crate::model` / `crate::error`.
 pub use tracker_core::{error, model};

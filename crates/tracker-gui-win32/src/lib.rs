@@ -8,7 +8,6 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 mod app;
-mod menu;
 mod settings_window;
 mod window;
 

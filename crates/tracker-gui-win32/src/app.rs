@@ -18,7 +18,6 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_RBUTTONUP, WM_SIZE, WM_TIMER,
 };
 
-use crate::menu::{CMD_EXIT_APP, CMD_OPEN_WINDOW, show_tray_context_menu};
 use crate::settings_window::{open_settings, register_settings_window_class};
 use crate::window::{
     IDC_HEADER_CPU_TEMP, IDC_HEADER_CPU_THROTTLE, IDC_HEADER_RAM, IDC_PROCESS_LIST, IDC_SEARCH,
@@ -33,27 +32,18 @@ use tracker_platform::monitor::cpu::CpuThrottleMonitor;
 use tracker_platform::monitor::memory::total_memory_status;
 use tracker_platform::monitor::processes::{snapshot_processes, terminate_process};
 use tracker_platform::startup::Startup;
-use tracker_platform::tray::{
-    TRAY_UID_CPU, TRAY_UID_FALLBACK, TRAY_UID_RAM, WM_TRAYICON, add_tray_icon, build_cpu_icon,
-    build_fallback_icon, build_ram_icon, destroy_icon, remove_tray_icon, update_tray_icon,
-    update_tray_tooltip,
-};
+use tracker_platform::tray::{TrayIcons, WM_TRAYICON};
+use tracker_platform::tray_menu::{CMD_EXIT_APP, CMD_OPEN_WINDOW, show_tray_context_menu};
 
 const TIMER_REFRESH_ID: usize = 1;
-
-#[allow(clippy::upper_case_acronyms)]
-type HICON = windows_sys::Win32::UI::WindowsAndMessaging::HICON;
 
 pub(crate) struct AppState {
     pub(crate) settings: AppSettings,
     processes: ProcessList,
     pub(crate) current_ram_percent: u32,
     pub(crate) cpu_monitor: CpuThrottleMonitor,
-    cpu_throttling: bool,
     window_bg_brush: HBRUSH,
-    tray_icon_ram: HICON,
-    tray_icon_cpu: HICON,
-    tray_icon_fallback: HICON,
+    tray: TrayIcons,
     pub(crate) settings_window: HWND,
     notify_text_buf: Vec<u16>,
 }
@@ -65,13 +55,10 @@ impl AppState {
             processes: ProcessList::new(),
             current_ram_percent: 0,
             cpu_monitor: CpuThrottleMonitor::new(),
-            cpu_throttling: false,
             // Same color as the window background: used as the background
             // brush when painting the red throttling label.
             window_bg_brush: unsafe { CreateSolidBrush(crate::window::APP_WINDOW_BG_COLOR) },
-            tray_icon_ram: std::ptr::null_mut(),
-            tray_icon_cpu: std::ptr::null_mut(),
-            tray_icon_fallback: std::ptr::null_mut(),
+            tray: TrayIcons::default(),
             settings_window: std::ptr::null_mut(),
             notify_text_buf: Vec::new(),
         }
@@ -261,26 +248,12 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_DESTROY => {
             let _ = KillTimer(hwnd, TIMER_REFRESH_ID);
-            remove_tray_icon(hwnd, TRAY_UID_RAM);
-            remove_tray_icon(hwnd, TRAY_UID_CPU);
-            remove_tray_icon(hwnd, TRAY_UID_FALLBACK);
 
             let state_ptr =
                 windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWLP_USERDATA)
                     as *mut AppState;
             if !state_ptr.is_null() {
-                if !(*state_ptr).tray_icon_ram.is_null() {
-                    destroy_icon((*state_ptr).tray_icon_ram);
-                    (*state_ptr).tray_icon_ram = std::ptr::null_mut();
-                }
-                if !(*state_ptr).tray_icon_cpu.is_null() {
-                    destroy_icon((*state_ptr).tray_icon_cpu);
-                    (*state_ptr).tray_icon_cpu = std::ptr::null_mut();
-                }
-                if !(*state_ptr).tray_icon_fallback.is_null() {
-                    destroy_icon((*state_ptr).tray_icon_fallback);
-                    (*state_ptr).tray_icon_fallback = std::ptr::null_mut();
-                }
+                (*state_ptr).tray.remove_all(hwnd);
                 if !(*state_ptr).window_bg_brush.is_null() {
                     let _ = DeleteObject((*state_ptr).window_bg_brush);
                     (*state_ptr).window_bg_brush = std::ptr::null_mut();
@@ -354,10 +327,6 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
         if cpu_throttling { "T" } else { "" },
     );
 
-    // The tray icons (RAM + CPU) are refreshed on every tick: colors come
-    // from the settings, with the red override while thermal throttling.
-    state.cpu_throttling = cpu_throttling;
-
     let memory = if let Some((ram_percent, total, available)) = ram_status {
         state.current_ram_percent = ram_percent;
 
@@ -385,107 +354,14 @@ fn render_rows(hwnd: HWND, state: &AppState) {
     set_virtual_item_count(hwnd, state.processes.rows().len());
 }
 
-/// Rebuilds both tray icons from the current settings: each icon is added
-/// or removed according to its enable flag and redrawn with the configured
-/// colors (red background on the CPU icon, or on the RAM icon when the CPU
-/// one is off, while thermal throttling).
+/// Rebuilds the tray icons from the current settings and readings.
 pub(crate) fn refresh_tray_icons(hwnd: HWND, state: &mut AppState) {
-    let red = state.settings.tray_icon_thermal_red && state.cpu_throttling;
-    // Only one icon lights up: the CPU one when shown, otherwise the RAM one.
-    let cpu_red = red && state.settings.tray_icon_cpu_enabled;
-    let ram_red = red && !state.settings.tray_icon_cpu_enabled;
-
-    let ram_tip = format!("RAM {}%", state.current_ram_percent);
-    apply_tray_icon(
+    state.tray.apply(
         hwnd,
-        TRAY_UID_RAM,
-        &mut state.tray_icon_ram,
-        state.settings.tray_icon_ram_enabled,
-        build_ram_icon(
-            state.current_ram_percent,
-            ram_red,
-            state.settings.tray_icon_ram_bg,
-            state.settings.tray_icon_ram_fg,
-            state.settings.tray_icon_font_size,
-            state.settings.tray_icon_font_weight,
-        ),
-        &ram_tip,
+        &state.settings,
+        state.current_ram_percent,
+        state.cpu_monitor.status(),
     );
-
-    let thermal = state.cpu_monitor.status();
-    let temp = thermal.avg_temp_c.map(|t| t as u32);
-    let cpu_tip = match temp {
-        Some(t) => format!("CPU avg {t} C\n{}", thermal.summary()),
-        None => "CPU avg: n/a (PawnIO driver missing)".to_string(),
-    };
-    apply_tray_icon(
-        hwnd,
-        TRAY_UID_CPU,
-        &mut state.tray_icon_cpu,
-        state.settings.tray_icon_cpu_enabled,
-        build_cpu_icon(
-            temp,
-            cpu_red,
-            state.settings.tray_icon_cpu_bg,
-            state.settings.tray_icon_cpu_fg,
-            state.settings.tray_icon_font_size,
-            state.settings.tray_icon_font_weight,
-        ),
-        &cpu_tip,
-    );
-
-    // With both icons off the tray would go silent: keep a plain "AT" badge
-    // so the app is still visibly running in the background.
-    let show_fallback =
-        !state.settings.tray_icon_ram_enabled && !state.settings.tray_icon_cpu_enabled;
-    let fallback_icon = if show_fallback {
-        build_fallback_icon(state.settings.tray_icon_font_weight)
-    } else {
-        std::ptr::null_mut()
-    };
-    apply_tray_icon(
-        hwnd,
-        TRAY_UID_FALLBACK,
-        &mut state.tray_icon_fallback,
-        show_fallback,
-        fallback_icon,
-        "Activity Tracker",
-    );
-}
-
-fn apply_tray_icon(
-    hwnd: HWND,
-    uid: u32,
-    current: &mut HICON,
-    enabled: bool,
-    icon: HICON,
-    tip: &str,
-) {
-    if !enabled {
-        if !current.is_null() {
-            remove_tray_icon(hwnd, uid);
-            destroy_icon(*current);
-            *current = std::ptr::null_mut();
-        }
-        return;
-    }
-
-    if icon.is_null() {
-        return;
-    }
-
-    if current.is_null() {
-        if add_tray_icon(hwnd, uid, tip, icon) {
-            *current = icon;
-        } else {
-            destroy_icon(icon);
-        }
-    } else {
-        update_tray_icon(hwnd, uid, icon);
-        update_tray_tooltip(hwnd, uid, tip);
-        destroy_icon(*current);
-        *current = icon;
-    }
 }
 
 /// Restarts the main refresh timer with the given interval (seconds).
