@@ -57,19 +57,26 @@ To uninstall, use "Apps and features" (PawnIO entry) or the installer.
 
 See [`driver/README.md`](driver/README.md) for details.
 
-Without the driver, the app falls back to a frequency+load heuristic and
-cannot read temperatures (the "CPU avg" label shows `n/a`). With the driver,
-it reads the real per-core MSR flag (`IA32_THERM_STATUS`) exactly like HWiNFO
-— a single throttled core is enough to show the red warning — and reports the
-average core temperature derived from it (`TjMax` minus the digital readout,
-with `TjMax` read from `IA32_TEMPERATURE_TARGET`).
+Without the driver (or without elevation) temperature and throttling are
+`n/a`: Windows reports fixed nominal clocks to user mode, so there is no
+reliable fallback. With the driver, a background thread samples the thermal
+MSRs of every physical core twice a second, like HWiNFO:
+
+- **thermal throttling** (red warning): core thermal status
+  (`IA32_THERM_STATUS` bit 0), package thermal status
+  (`IA32_PACKAGE_THERM_STATUS` bit 0) or PROCHOT# (bit 2, often asserted by
+  the laptop's embedded controller). A single core is enough, and a burst
+  between two UI refreshes is kept visible for 5 seconds;
+- **power limit** (bit 10): shown in the tooltip, not as throttling;
+- average temperature over the physical cores (`TjMax` minus the digital
+  readout, `TjMax` from `IA32_TEMPERATURE_TARGET`), package temperature and
+  effective clock (APERF/MPERF).
 
 ## Tests and diagnostics
 
 ```bash
 cargo test                          # unit/integration tests
-cargo run --example msr_probe       # per-core temperatures and throttle flags (requires the driver)
-cargo run --example cpu_probe       # per-core frequencies/usage + throttle verdict
+cargo run --example msr_probe       # per-core status bits, temperatures, clocks (requires the driver + admin)
 ```
 
 ## Notes

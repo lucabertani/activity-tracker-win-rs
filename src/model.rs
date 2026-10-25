@@ -32,6 +32,121 @@ pub enum DisplayRow {
     },
 }
 
+/// Why the CPU is being slowed down, as reported by the per-core and
+/// package thermal status MSRs (the same flags HWiNFO shows).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ThrottleReasons {
+    /// A core reached its thermal trip point (`IA32_THERM_STATUS` bit 0).
+    pub core_thermal: bool,
+    /// The package reached its thermal trip point
+    /// (`IA32_PACKAGE_THERM_STATUS` bit 0).
+    pub package_thermal: bool,
+    /// PROCHOT# asserted, usually by the embedded controller or the VRM on
+    /// laptops (bit 2 of either MSR).
+    pub prochot: bool,
+    /// Running at a power limit (bit 10). Normal under sustained load, so it
+    /// is reported but does not count as thermal throttling.
+    pub power_limit: bool,
+}
+
+impl ThrottleReasons {
+    /// Thermal throttling in the strict sense: what lights up the red
+    /// indicator.
+    pub fn thermal(&self) -> bool {
+        self.core_thermal || self.package_thermal || self.prochot
+    }
+
+    pub fn any(&self) -> bool {
+        self.thermal() || self.power_limit
+    }
+
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            core_thermal: self.core_thermal || other.core_thermal,
+            package_thermal: self.package_thermal || other.package_thermal,
+            prochot: self.prochot || other.prochot,
+            power_limit: self.power_limit || other.power_limit,
+        }
+    }
+
+    /// Short human-readable list, e.g. "core thermal, PROCHOT".
+    pub fn describe(&self) -> String {
+        let labels = [
+            (self.core_thermal, "core thermal"),
+            (self.package_thermal, "package thermal"),
+            (self.prochot, "PROCHOT"),
+            (self.power_limit, "power limit"),
+        ];
+        labels
+            .iter()
+            .filter(|(on, _)| *on)
+            .map(|(_, label)| *label)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThrottleState {
+    /// No reliable source: the PawnIO driver is missing, the app is not
+    /// elevated, or every MSR read failed.
+    Unknown,
+    Ok,
+    Throttling,
+}
+
+/// CPU thermal snapshot handed to the UI on every refresh tick.
+#[derive(Debug, Clone, Default)]
+pub struct ThermalStatus {
+    /// The MSR path delivered at least one valid reading.
+    pub available: bool,
+    /// Reasons seen since the previous tick (latched by the background
+    /// sampler, held for a few seconds so short bursts stay visible).
+    pub reasons: ThrottleReasons,
+    /// Average temperature over the physical cores.
+    pub avg_temp_c: Option<f64>,
+    pub package_temp_c: Option<u16>,
+    /// Effective clock (APERF/MPERF) averaged over the physical cores.
+    pub avg_effective_mhz: Option<u32>,
+    pub max_effective_mhz: Option<u32>,
+    /// Share of the samples of the last minute with thermal throttling.
+    pub throttled_share_last_minute: Option<f32>,
+}
+
+impl ThermalStatus {
+    pub fn state(&self) -> ThrottleState {
+        if !self.available {
+            ThrottleState::Unknown
+        } else if self.reasons.thermal() {
+            ThrottleState::Throttling
+        } else {
+            ThrottleState::Ok
+        }
+    }
+
+    pub fn is_throttling(&self) -> bool {
+        self.state() == ThrottleState::Throttling
+    }
+
+    /// One line for tooltips, e.g. "Throttling: PROCHOT (12% of last min)".
+    pub fn summary(&self) -> String {
+        if !self.available {
+            return "Throttling: n/a (needs PawnIO + elevation)".to_string();
+        }
+        let mut text = if self.reasons.any() {
+            format!("Throttling: {}", self.reasons.describe())
+        } else {
+            "No throttling".to_string()
+        };
+        if let Some(share) = self.throttled_share_last_minute
+            && share > 0.0
+        {
+            text.push_str(&format!(" ({:.0}% of last min)", share * 100.0));
+        }
+        text
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortColumn {
     Name,

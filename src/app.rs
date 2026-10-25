@@ -437,30 +437,21 @@ fn get_state_mut(hwnd: HWND) -> Option<&'static mut AppState> {
 }
 
 fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
-    // RAM and CPU sampling run in parallel: both are non-blocking Win32 calls,
-    // and the CPU path (per-core MSR reads with affinity pinning) is the
-    // slower of the two.
-    let mut cpu_throttling = false;
-    let mut ram_status: Option<(u32, u64, u64)> = None;
-    std::thread::scope(|s| {
-        s.spawn(|| {
-            cpu_throttling = state.cpu_monitor.refresh();
-        });
-        s.spawn(|| {
-            ram_status = total_memory_status().ok();
-        });
-    });
+    // The MSRs are sampled by a background thread: this only collects what
+    // it latched since the previous tick.
+    let cpu_throttling = state.cpu_monitor.refresh().is_throttling();
+    let ram_status = total_memory_status().ok();
 
     // Average core temperature: only available on the MSR (driver) path.
-    let cpu_temp = state.cpu_monitor.avg_temperature_celsius();
+    let cpu_temp = state.cpu_monitor.status().avg_temp_c;
     let cpu_temp_label = match cpu_temp {
         Some(t) => format!("CPU avg: {:.0} C", t),
         None => "CPU avg: n/a".to_string(),
     };
     set_label_text(hwnd, IDC_HEADER_CPU_TEMP, &cpu_temp_label);
 
-    // Thermal throttling check: same refresh interval as the RAM percentage.
-    // A single throttled core is enough to light up the warning.
+    // A single throttled core (or the package, or PROCHOT) since the
+    // previous tick is enough to light up the warning.
     set_label_text(
         hwnd,
         IDC_HEADER_CPU_THROTTLE,
@@ -532,12 +523,10 @@ pub(crate) fn refresh_tray_icons(hwnd: HWND, state: &mut AppState) {
         &ram_tip,
     );
 
-    let temp = state
-        .cpu_monitor
-        .avg_temperature_celsius()
-        .map(|t| t as u32);
+    let thermal = state.cpu_monitor.status();
+    let temp = thermal.avg_temp_c.map(|t| t as u32);
     let cpu_tip = match temp {
-        Some(t) => format!("CPU avg {t} C"),
+        Some(t) => format!("CPU avg {t} C\n{}", thermal.summary()),
         None => "CPU avg: n/a (PawnIO driver missing)".to_string(),
     };
     apply_tray_icon(

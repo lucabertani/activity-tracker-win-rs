@@ -847,10 +847,7 @@ fn update_preview_ram(data: &mut SettingsData) {
 
 fn update_preview_cpu(data: &mut SettingsData) {
     let state = unsafe { &*data.state };
-    let temp = state
-        .cpu_monitor
-        .avg_temperature_celsius()
-        .map(|t| t as u32);
+    let temp = state.cpu_monitor.status().avg_temp_c.map(|t| t as u32);
     let icon = build_cpu_icon(
         temp,
         false,
