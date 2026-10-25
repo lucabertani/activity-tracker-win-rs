@@ -54,6 +54,23 @@ Note emerse:
 - Chiudere la finestra GPUI libera solo una parte della memoria: il device
   DirectX resta allocato a livello di processo.
 
+Misure release (Core Ultra 9 185H, refresh 4 s, senza driver):
+
+| | GPUI, finestra aperta | GPUI, nel tray | Legacy Win32 |
+|---|---|---|---|
+| exe | 30,3 MB | | ~1–2 MB (build solo legacy) |
+| apertura finestra | 0,32 s | | |
+| working set | 123 MB | 120 MB | 16 MB |
+| CPU (20 s) | 469 ms (~2,3% di un core) | 78 ms (~0,4%) | 109 ms (~0,5%) |
+
+A finestra aperta e senza tick la GUI GPUI consuma ~190 ms ogni 20 s; il
+resto è il ridisegno della tabella a ogni aggiornamento. Possibile
+ottimizzazione futura: ridisegnare solo se le righe visibili cambiano.
+
+Limite noto: con GPUI compilato l'exe usa il manifest DPI-aware di gpui,
+quindi anche la GUI legacy (`--legacy-ui`) diventa DPI-aware; il suo layout
+a pixel fissi appare più piccolo con scaling > 100%.
+
 
 Il documento ha due parti indipendenti:
 
