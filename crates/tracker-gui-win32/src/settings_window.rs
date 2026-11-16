@@ -40,7 +40,7 @@ use crate::style;
 use crate::window::{get_control_text, wide};
 use tracker_core::model::{
     AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_FONT_WEIGHT,
-    DEFAULT_TRAY_ICON_FONT_SIZE, DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG,
+    DEFAULT_TRAY_ICON_FONT_SIZE, DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG, ThemePreference,
     parse_refresh_interval_seconds,
 };
 use tracker_platform::restart::{confirm_switch, relaunch};
@@ -67,6 +67,7 @@ const IDC_EDIT_INTERVAL: i32 = 3004;
 const IDC_BTN_APPLY: i32 = 3005;
 const IDC_BTN_CLOSE: i32 = 3006;
 const IDC_CHK_MODERN_UI: i32 = 3007;
+const IDC_COMBO_THEME: i32 = 3008;
 const IDC_CHK_RAM_ENABLED: i32 = 3101;
 const IDC_PREVIEW_RAM: i32 = 3102;
 const IDC_SWATCH_RAM_BG: i32 = 3103;
@@ -219,6 +220,7 @@ unsafe extern "system" fn wnd_proc(
             fit_tab_strip(hwnd);
             sync_controls(hwnd, data);
             show_page(hwnd, data, 0);
+            style::apply_window(hwnd);
             0
         }
         WM_COMMAND => {
@@ -245,6 +247,7 @@ unsafe extern "system" fn wnd_proc(
                 IDC_CHK_MODERN_UI if notify == BN_CLICKED => on_switch_ui(hwnd, data),
                 IDC_BTN_APPLY if notify == BN_CLICKED => on_apply(hwnd, data),
                 IDC_BTN_RESTORE if notify == BN_CLICKED => on_restore_defaults(hwnd, data),
+                IDC_COMBO_THEME if notify == CBN_SELCHANGE => on_theme(hwnd, data),
                 IDC_COMBO_FONT_SIZE if notify == CBN_SELCHANGE => on_font_size(hwnd, data),
                 IDC_COMBO_FONT_WEIGHT if notify == CBN_SELCHANGE => on_font_weight(hwnd, data),
                 IDC_BTN_CLOSE if notify == BN_CLICKED => {
@@ -255,6 +258,9 @@ unsafe extern "system" fn wnd_proc(
             0
         }
         WM_NOTIFY => {
+            if let Some(result) = style::paint_notification(lparam) {
+                return result;
+            }
             let Some(data) = get_data_mut(hwnd) else {
                 return 0;
             };
@@ -288,9 +294,14 @@ unsafe extern "system" fn wnd_proc(
                 SetTextColor(wparam as HDC, 0);
                 return data.swatch_brushes[index] as LRESULT;
             }
-            style::paint_on_background(wparam as HDC, style::TEXT_COLOR)
+            style::paint_on_background(wparam as HDC, style::text_color())
         }
-        WM_CTLCOLORBTN => style::paint_on_background(wparam as HDC, style::TEXT_COLOR),
+        windows_sys::Win32::UI::WindowsAndMessaging::WM_ERASEBKGND => {
+            style::erase_background(hwnd, wparam as HDC)
+        }
+        windows_sys::Win32::UI::WindowsAndMessaging::WM_CTLCOLOREDIT
+        | windows_sys::Win32::UI::WindowsAndMessaging::WM_CTLCOLORLISTBOX
+        | WM_CTLCOLORBTN => style::paint_on_background(wparam as HDC, style::text_color()),
         WM_CLOSE => {
             DestroyWindow(hwnd);
             0
@@ -451,6 +462,27 @@ fn create_controls(hwnd: HWND, data: &mut SettingsData) {
             IDC_CHK_MODERN_UI,
         ));
     }
+
+    data.general_controls.push(create_label(
+        hwnd,
+        hinstance,
+        &class_label,
+        "Theme:",
+        32,
+        236,
+        140,
+    ));
+    data.general_controls.push(create_option_combo(
+        hwnd,
+        hinstance,
+        180,
+        234,
+        IDC_COMBO_THEME,
+        &ThemePreference::ALL
+            .iter()
+            .map(|theme| theme.label().to_string())
+            .collect::<Vec<_>>(),
+    ));
 
     // --- Tray icons page ---
     let preview_ram = create_icon_preview(hwnd, IDC_PREVIEW_RAM, 32, 76);
@@ -819,6 +851,14 @@ fn sync_controls(hwnd: HWND, data: &mut SettingsData) {
         state.settings.tray_icon_cpu_enabled,
     );
 
+    let index = ThemePreference::ALL
+        .iter()
+        .position(|theme| *theme == state.settings.theme)
+        .unwrap_or(0);
+    unsafe {
+        SendMessageW(GetDlgItem(hwnd, IDC_COMBO_THEME), CB_SETCURSEL, index, 0);
+    }
+
     // Font size dropdown: select the stored value ("Auto" if unknown).
     let combo = unsafe { GetDlgItem(hwnd, IDC_COMBO_FONT_SIZE) };
     let index = FONT_SIZE_OPTIONS
@@ -1055,6 +1095,21 @@ fn on_color(hwnd: HWND, data: &mut SettingsData, id: i32) {
         update_preview_cpu(data);
     }
     refresh_tray_icons(main_hwnd(hwnd), state);
+}
+
+fn on_theme(hwnd: HWND, data: &mut SettingsData) {
+    let index = unsafe { SendMessageW(GetDlgItem(hwnd, IDC_COMBO_THEME), CB_GETCURSEL, 0, 0) };
+    let Some(theme) = ThemePreference::ALL.get(index as usize) else {
+        return;
+    };
+    let state = unsafe { &mut *data.state };
+    state.settings.theme = *theme;
+    style::update(*theme);
+    style::apply_window(main_hwnd(hwnd));
+    style::apply_window(hwnd);
+    if let Err(err) = save_settings(&state.settings) {
+        show_error(hwnd, &format!("Settings save error: {err}"));
+    }
 }
 
 fn on_font_size(hwnd: HWND, data: &mut SettingsData) {

@@ -127,7 +127,11 @@ impl AppModel {
             || new.start_in_background != self.settings.start_in_background;
         let interval_changed =
             new.refresh_interval_seconds != self.settings.refresh_interval_seconds;
+        let theme_changed = new.theme != self.settings.theme;
         self.settings = new;
+        if theme_changed {
+            crate::theme::apply(self.settings.theme, None, cx);
+        }
 
         if interval_changed && let Some(sampler) = &self.sampler {
             sampler.set_interval(Duration::from_secs(self.settings.refresh_interval_seconds));

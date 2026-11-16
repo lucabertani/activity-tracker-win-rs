@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use tracker_core::model::{
     AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_FONT_WEIGHT,
-    DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG, parse_refresh_interval_seconds,
+    DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG, ThemePreference, parse_refresh_interval_seconds,
 };
 use tracker_platform::settings::store::{load_settings, save_settings, settings_path};
 
@@ -35,6 +35,7 @@ fn settings_roundtrip_uses_appdata_location() {
         tray_icon_font_size: 0,
         tray_icon_font_weight: DEFAULT_TRAY_FONT_WEIGHT,
         modern_ui: false,
+        theme: ThemePreference::Dark,
     };
 
     save_settings(&source).expect("save settings");
@@ -50,6 +51,24 @@ fn settings_roundtrip_uses_appdata_location() {
     assert!(loaded.window_start_hidden);
     assert!(loaded.show_tray_tooltip);
     assert!(!loaded.modern_ui);
+    assert_eq!(loaded.theme, ThemePreference::Dark);
+}
+
+#[test]
+fn all_theme_choices_persist_in_config() {
+    let _guard = APPDATA_LOCK.lock().expect("lock APPDATA");
+    let temp = tempfile::tempdir().expect("tempdir");
+    unsafe {
+        std::env::set_var("APPDATA", temp.path());
+    }
+    for theme in ThemePreference::ALL {
+        let settings = AppSettings {
+            theme,
+            ..AppSettings::default()
+        };
+        save_settings(&settings).expect("save theme");
+        assert_eq!(load_settings().expect("load theme").theme, theme);
+    }
 }
 
 #[test]
@@ -76,6 +95,7 @@ fn settings_with_utf8_bom_still_load() {
     assert!(loaded.tray_icon_thermal_red);
     // Settings written before the interface switch keep the new interface.
     assert!(loaded.modern_ui);
+    assert_eq!(loaded.theme, ThemePreference::Auto);
 }
 
 #[test]

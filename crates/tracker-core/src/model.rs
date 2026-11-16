@@ -186,8 +186,32 @@ impl SortState {
     }
 }
 
+/// Window appearance. Auto follows the operating system's app theme.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemePreference {
+    #[default]
+    Auto,
+    Light,
+    Dark,
+}
+
+impl ThemePreference {
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Light, Self::Dark];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto (system)",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
+    #[serde(default)]
+    pub theme: ThemePreference,
     pub start_on_windows: bool,
     pub start_in_background: bool,
     pub refresh_interval_seconds: u64,
@@ -284,6 +308,7 @@ impl Default for AppSettings {
             tray_icon_font_size: DEFAULT_TRAY_ICON_FONT_SIZE,
             tray_icon_font_weight: DEFAULT_TRAY_FONT_WEIGHT,
             modern_ui: true,
+            theme: ThemePreference::Auto,
         }
     }
 }
@@ -305,7 +330,24 @@ pub fn parse_refresh_interval_seconds(input: &str, fallback: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppSettings, parse_refresh_interval_seconds};
+    use super::{AppSettings, ThemePreference, parse_refresh_interval_seconds};
+
+    #[test]
+    fn theme_wire_values_roundtrip() {
+        assert_eq!(AppSettings::default().theme, ThemePreference::Auto);
+        for (theme, wire) in [
+            (ThemePreference::Auto, "\"auto\""),
+            (ThemePreference::Light, "\"light\""),
+            (ThemePreference::Dark, "\"dark\""),
+        ] {
+            assert_eq!(serde_json::to_string(&theme).unwrap(), wire);
+            assert_eq!(
+                serde_json::from_str::<ThemePreference>(wire).unwrap(),
+                theme
+            );
+        }
+        assert!(serde_json::from_str::<ThemePreference>("\"invalid\"").is_err());
+    }
 
     #[test]
     fn normalize_interval_bounds() {
@@ -339,6 +381,7 @@ mod tests {
         let json = r#"{"start_on_windows":true,"start_in_background":true,"refresh_interval_seconds":5,"window_start_hidden":false,"show_tray_tooltip":true}"#;
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(!settings.tray_icon_thermal_red);
+        assert_eq!(settings.theme, ThemePreference::Auto);
         assert_eq!(settings.refresh_interval_seconds, 5);
     }
 }

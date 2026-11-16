@@ -8,3 +8,4 @@ edition.workspace = true
 tracker-core.workspace = true
 tracker-platform.workspace = true
 windows-sys.workspace = true
+winreg.workspace = true

@@ -86,6 +86,7 @@ impl AppState {
 
 pub fn run(startup: Startup) -> AppResult<()> {
     use_system_dpi_scaling();
+    style::update(startup.settings.theme);
 
     let hinstance = unsafe { GetModuleHandleW(std::ptr::null()) } as HINSTANCE;
     if hinstance.is_null() {
@@ -144,6 +145,7 @@ unsafe extern "system" fn wnd_proc(
 
             let hinstance = (*cs).hInstance as HINSTANCE;
             create_controls(hwnd, hinstance);
+            style::apply_window(hwnd);
 
             if let Some(state) = get_state_mut(hwnd) {
                 let _ = SetTimer(
@@ -159,6 +161,9 @@ unsafe extern "system" fn wnd_proc(
             0
         }
         WM_NOTIFY => {
+            if let Some(result) = style::paint_notification(lparam) {
+                return result;
+            }
             let nmhdr = lparam as *const windows_sys::Win32::UI::Controls::NMHDR;
             if !nmhdr.is_null() && (*nmhdr).idFrom as i32 == IDC_PROCESS_LIST {
                 match (*nmhdr).code {
@@ -286,16 +291,31 @@ unsafe extern "system" fn wnd_proc(
             PostQuitMessage(0);
             0
         }
-        WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
+        windows_sys::Win32::UI::WindowsAndMessaging::WM_SETTINGCHANGE => {
+            if let Some(state) = get_state_mut(hwnd)
+                && style::update(state.settings.theme)
+            {
+                style::apply_window(hwnd);
+                style::apply_window(state.settings_window);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        windows_sys::Win32::UI::WindowsAndMessaging::WM_ERASEBKGND => {
+            style::erase_background(hwnd, wparam as HDC)
+        }
+        windows_sys::Win32::UI::WindowsAndMessaging::WM_CTLCOLOREDIT
+        | windows_sys::Win32::UI::WindowsAndMessaging::WM_CTLCOLORLISTBOX
+        | WM_CTLCOLORSTATIC
+        | WM_CTLCOLORBTN => {
             // Labels on the window background; the throttling warning in red.
             let control = lparam as HWND;
             let warning = !control.is_null() && GetDlgCtrlID(control) == IDC_HEADER_CPU_THROTTLE;
             style::paint_on_background(
                 wparam as HDC,
                 if warning {
-                    style::WARNING_COLOR
+                    style::warning_color()
                 } else {
-                    style::TEXT_COLOR
+                    style::text_color()
                 },
             )
         }

@@ -34,7 +34,7 @@ pub fn run(startup: Startup) -> AppResult<()> {
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
-            theme::init(cx);
+            theme::init(startup.settings.theme, cx);
 
             let model = AppModel::new(
                 startup.settings.clone(),

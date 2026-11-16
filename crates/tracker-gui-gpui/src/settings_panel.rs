@@ -16,7 +16,7 @@ use gpui_kit::{
 };
 use tracker_core::model::{
     AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_FONT_WEIGHT,
-    DEFAULT_TRAY_ICON_FONT_SIZE, DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG,
+    DEFAULT_TRAY_ICON_FONT_SIZE, DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG, ThemePreference,
 };
 use tracker_platform::restart::switch_prompt;
 use tracker_platform::tray::{IconPixels, cpu_icon_pixels, ram_icon_pixels};
@@ -46,6 +46,7 @@ enum Swatch {
 pub struct SettingsPanel {
     model: Entity<AppModel>,
     interval: Entity<InputState>,
+    theme: Entity<SelectState<Vec<SharedString>>>,
     colors: Vec<(Swatch, Entity<ColorPickerState>)>,
     font_size: Entity<SelectState<Vec<SharedString>>>,
     font_weight: Entity<SelectState<Vec<SharedString>>>,
@@ -75,6 +76,32 @@ impl SettingsPanel {
                     && let Ok(seconds) = input.read(cx).value().trim().parse::<u64>()
                 {
                     this.change(window, cx, |s| s.refresh_interval_seconds = seconds);
+                }
+            },
+        ));
+
+        let theme = cx.new(|cx| {
+            let items = ThemePreference::ALL
+                .iter()
+                .map(|theme| SharedString::from(theme.label()))
+                .collect::<Vec<_>>();
+            let index = ThemePreference::ALL
+                .iter()
+                .position(|theme| *theme == settings.theme);
+            SelectState::new(items, index.map(IndexPath::new), window, cx)
+        });
+        subscriptions.push(cx.subscribe_in(
+            &theme,
+            window,
+            |this, _, event: &SelectEvent<Vec<SharedString>>, window, cx| {
+                let SelectEvent::Confirm(Some(label)) = event else {
+                    return;
+                };
+                if let Some(theme) = ThemePreference::ALL
+                    .iter()
+                    .find(|theme| theme.label() == label.as_ref())
+                {
+                    this.change(window, cx, |s| s.theme = *theme);
                 }
             },
         ));
@@ -151,6 +178,7 @@ impl SettingsPanel {
         let mut panel = Self {
             model,
             interval,
+            theme,
             colors,
             font_size,
             font_weight,
@@ -363,6 +391,11 @@ impl Render for SettingsPanel {
                                 ),
                         )
                     })
+                    .child(section("Appearance", cx))
+                    .child(row(
+                        "Theme",
+                        div().w(px(160.)).child(Select::new(&self.theme).small()),
+                    ))
                     .child(section("General", cx))
                     .child(row(
                         "Start with Windows",

@@ -71,6 +71,15 @@ CPU. Switch in the settings ("New interface" in the GPUI panel, "Use the new
 interface" in the classic window): after you confirm, the app saves the
 choice and restarts itself with the other interface.
 
+**Theme.** Choose **Auto (system)**, **Light** or **Dark** in Settings
+(in either interface). Changes apply immediately. Auto is the default and
+follows Windows' app color mode, including changes while the app is running.
+The choice is saved in `%APPDATA%\ActivityTracker\settings.json` as
+`"theme": "auto"`, `"theme": "light"` or `"theme": "dark"`. Existing config
+files without `theme` keep following the system. To edit the JSON manually,
+close the app first and restart it afterwards. Tray icon colors remain
+independently configurable.
+
 Closing or minimizing the window sends the app to the tray. The GPUI window
 is actually closed then and recreated on the next double-click.
 

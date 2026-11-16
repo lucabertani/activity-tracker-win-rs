@@ -89,6 +89,7 @@ impl MainView {
             }),
         ];
 
+        let appearance = crate::theme::follow_system_appearance(window, model.clone(), cx);
         Self {
             model,
             table,
@@ -98,7 +99,7 @@ impl MainView {
             focus: cx.focus_handle(),
             _subscriptions: {
                 let mut subscriptions = subscriptions;
-                subscriptions.push(crate::theme::follow_system_appearance(window));
+                subscriptions.push(appearance);
                 subscriptions
             },
         }
