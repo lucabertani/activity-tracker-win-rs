@@ -107,7 +107,7 @@ pub fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
             "",
             380,
             18,
-            120,
+            195,
             24,
             IDC_HEADER_CPU_THROTTLE,
         );

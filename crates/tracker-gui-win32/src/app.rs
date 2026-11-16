@@ -326,7 +326,16 @@ fn get_state_mut(hwnd: HWND) -> Option<&'static mut AppState> {
 fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
     // The MSRs are sampled by a background thread: this only collects what
     // it latched since the previous tick.
-    let cpu_throttling = state.cpu_monitor.refresh().is_throttling();
+    let thermal = state.cpu_monitor.refresh();
+    // Name the reason (e.g. "PROCHOT"): which bit fired matters to tell a
+    // hot CPU from a platform signal.
+    let throttle_label = if thermal.is_throttling() {
+        let mut reasons = thermal.reasons;
+        reasons.power_limit = false;
+        reasons.describe()
+    } else {
+        String::new()
+    };
     let ram_status = total_memory_status().ok();
 
     // Average core temperature: only available on the MSR (driver) path.
@@ -339,11 +348,7 @@ fn refresh_ui_data(hwnd: HWND, state: &mut AppState) {
 
     // A single throttled core (or the package, or PROCHOT) since the
     // previous tick is enough to light up the warning.
-    set_label_text(
-        hwnd,
-        IDC_HEADER_CPU_THROTTLE,
-        if cpu_throttling { "Throttling" } else { "" },
-    );
+    set_label_text(hwnd, IDC_HEADER_CPU_THROTTLE, &throttle_label);
 
     let memory = if let Some((ram_percent, total, available)) = ram_status {
         state.current_ram_percent = ram_percent;

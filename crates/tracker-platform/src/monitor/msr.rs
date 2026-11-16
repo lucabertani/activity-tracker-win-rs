@@ -253,6 +253,13 @@ impl MsrThermalMonitor {
         &self.cores
     }
 
+    /// Raw `IA32_TEMPERATURE_TARGET`, read now: bits 29:24 hold the TCC
+    /// offset, which the platform (e.g. Intel DTT) may change at runtime to
+    /// lower the thermal activation point below TjMax.
+    pub fn temperature_target(&self) -> Option<u64> {
+        read_msr(self.handle, MSR_IA32_TEMPERATURE_TARGET)
+    }
+
     /// Samples every core. With `with_frequency`, also reads APERF/MPERF:
     /// the effective clock is averaged since the previous frequency sample
     /// (`None` on the first one).
