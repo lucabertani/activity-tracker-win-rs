@@ -28,16 +28,16 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CB_GETCURSEL, CB_SETCURSEL, CBN_SELCHANGE, CBS_DROPDOWNLIST, CREATESTRUCTW, CS_HREDRAW,
     CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, ES_AUTOHSCROLL,
     GWLP_HWNDPARENT, GWLP_USERDATA, GetDlgCtrlID, GetDlgItem, GetWindowLongPtrW, HMENU, IDC_ARROW,
-    LoadCursorW, PostMessageW, RegisterClassW, STN_CLICKED, SW_HIDE, SW_RESTORE, SW_SHOW,
-    SWP_NOMOVE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
-    SetWindowTextW, ShowWindow, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORBTN, WM_CTLCOLORSTATIC,
-    WM_DESTROY, WM_NOTIFY, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT,
-    WS_EX_DLGMODALFRAME, WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    LoadCursorW, LoadIconW, PostMessageW, RegisterClassW, STN_CLICKED, SW_HIDE, SW_RESTORE,
+    SW_SHOW, SWP_NOMOVE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
+    SetWindowPos, SetWindowTextW, ShowWindow, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORBTN,
+    WM_CTLCOLORSTATIC, WM_DESTROY, WM_NOTIFY, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE,
+    WS_EX_CONTROLPARENT, WS_EX_DLGMODALFRAME, WS_MINIMIZEBOX, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
 use crate::app::{AppState, WM_APP_EXIT, refresh_tray_icons, restart_refresh_timer, show_error};
 use crate::style;
-use crate::window::{get_control_text, wide};
+use crate::window::{APP_ICON_ID, get_control_text, wide};
 use tracker_core::model::{
     AppSettings, DEFAULT_TRAY_CPU_BG, DEFAULT_TRAY_CPU_FG, DEFAULT_TRAY_FONT_WEIGHT,
     DEFAULT_TRAY_ICON_FONT_SIZE, DEFAULT_TRAY_RAM_BG, DEFAULT_TRAY_RAM_FG, ThemePreference,
@@ -134,7 +134,7 @@ pub fn register_settings_window_class(hinstance: HINSTANCE) -> bool {
         cbClsExtra: 0,
         cbWndExtra: 0,
         hInstance: hinstance,
-        hIcon: std::ptr::null_mut(),
+        hIcon: unsafe { LoadIconW(hinstance, APP_ICON_ID) },
         hCursor: unsafe { LoadCursorW(std::ptr::null_mut(), IDC_ARROW) },
         hbrBackground: style::bg_brush(),
         lpszMenuName: std::ptr::null_mut(),

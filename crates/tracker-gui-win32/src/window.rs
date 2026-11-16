@@ -11,7 +11,7 @@ use windows_sys::Win32::UI::Controls::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BS_PUSHBUTTON, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, ES_AUTOHSCROLL,
     GetWindowTextLengthW, GetWindowTextW, HMENU, HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW,
-    LoadCursorW, RegisterClassW, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOMOVE, SWP_NOSIZE,
+    LoadCursorW, LoadIconW, RegisterClassW, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOMOVE, SWP_NOSIZE,
     SendMessageW, SetForegroundWindow, SetWindowPos, SetWindowTextW, ShowWindow, WNDCLASSW,
     WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
@@ -27,6 +27,8 @@ pub const IDC_PROCESS_LIST: i32 = 2005;
 pub const IDC_TERMINATE_PROCESS: i32 = 2010;
 
 pub const MAIN_CLASS: &str = "ActivityTrackerMainWindow";
+/// Application icon embedded by the executable's build.rs.
+pub const APP_ICON_ID: *const u16 = 1 as _;
 
 pub fn register_main_window_class(
     hinstance: HINSTANCE,
@@ -39,7 +41,7 @@ pub fn register_main_window_class(
         cbClsExtra: 0,
         cbWndExtra: 0,
         hInstance: hinstance,
-        hIcon: std::ptr::null_mut(),
+        hIcon: unsafe { LoadIconW(hinstance, APP_ICON_ID) },
         hCursor: unsafe { LoadCursorW(std::ptr::null_mut(), IDC_ARROW) },
         hbrBackground: style::bg_brush(),
         lpszMenuName: std::ptr::null(),

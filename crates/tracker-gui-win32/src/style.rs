@@ -4,9 +4,12 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tracker_core::model::ThemePreference;
-use windows_sys::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
+use windows_sys::Win32::Graphics::Dwm::{
+    DWMWA_COLOR_DEFAULT, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute,
+};
 use windows_sys::Win32::UI::Controls::{
-    LVM_SETBKCOLOR, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, SetWindowTheme,
+    LVM_SETBKCOLOR, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR,
+    LVS_EX_GRIDLINES, SetWindowTheme,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::GetClassNameW;
 use winreg::RegKey;
@@ -15,7 +18,7 @@ use winreg::enums::HKEY_CURRENT_USER;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT};
 use windows_sys::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET, FW_NORMAL, FW_SEMIBOLD,
-    HBRUSH, HDC, HFONT, OUT_DEFAULT_PRECIS, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE,
+    HBRUSH, HDC, HFONT, OUT_DEFAULT_PRECIS, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE,
     RedrawWindow, SetBkColor, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{EnumChildWindows, SendMessageW, WM_SETFONT};
@@ -29,6 +32,11 @@ const BG_COLOR: u32 = 0x00F3F3F3;
 const TEXT_COLOR: u32 = 0x001B1B1B;
 /// Throttling warning: #c42b1c (Windows 11 "critical" red).
 const WARNING_COLOR: u32 = 0x001C2BC4;
+/// Dark-mode separators and input frames: gray, never the system's white edge.
+const DARK_GRID_COLOR: u32 = 0x00787878;
+const DARK_BORDER_COLOR: u32 = 0x00909090;
+/// Checkbox outlines need more contrast than decorative separators.
+const DARK_CHECKBOX_COLOR: u32 = 0x00C0C0C0;
 
 static DARK: AtomicBool = AtomicBool::new(false);
 static DARK_BRUSH: OnceLock<usize> = OnceLock::new();
@@ -95,7 +103,20 @@ pub fn apply_window(hwnd: HWND) {
                     usize::from(class == "SysTabControl32"),
                 );
             }
+            if class == "Edit" || class == "SysListView32" || class == "ComboBox" {
+                windows_sys::Win32::UI::Shell::SetWindowSubclass(child, Some(frame_proc), 2, 0);
+            }
             if class == "SysListView32" {
+                let gridlines = match is_dark() {
+                    true => 0,
+                    false => LVS_EX_GRIDLINES,
+                };
+                SendMessageW(
+                    child,
+                    LVM_SETEXTENDEDLISTVIEWSTYLE,
+                    LVS_EX_GRIDLINES as usize,
+                    gridlines as isize,
+                );
                 SendMessageW(child, LVM_SETBKCOLOR, 0, bg_color() as isize);
                 SendMessageW(child, LVM_SETTEXTBKCOLOR, 0, bg_color() as isize);
                 SendMessageW(child, LVM_SETTEXTCOLOR, 0, text_color() as isize);
@@ -114,13 +135,80 @@ pub fn apply_window(hwnd: HWND) {
             &dark as *const _ as _,
             std::mem::size_of_val(&dark) as u32,
         );
+        let title_color = match is_dark() {
+            true => text_color(),
+            false => DWMWA_COLOR_DEFAULT,
+        };
+        // The default inactive caption text is almost black even with a dark
+        // title bar. Override it explicitly (Windows 11; ignored on Windows 10).
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TEXT_COLOR as u32,
+            &title_color as *const _ as _,
+            std::mem::size_of_val(&title_color) as u32,
+        );
         EnumChildWindows(hwnd, Some(apply_child), 0);
         RedrawWindow(
             hwnd,
             std::ptr::null(),
             std::ptr::null_mut(),
-            RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+            RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME,
         );
+    }
+}
+
+/// WS_EX_CLIENTEDGE uses the system's bright sunken border. Repaint just
+/// that non-client frame in dark mode; leave native sizing and input intact.
+unsafe extern "system" fn frame_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: usize,
+    lparam: isize,
+    _: usize,
+    _: usize,
+) -> LRESULT {
+    use windows_sys::Win32::UI::Shell::DefSubclassProc;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{PRF_NONCLIENT, WM_NCPAINT, WM_PRINT};
+    let result = unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+    if is_dark() && (msg == WM_NCPAINT || (msg == WM_PRINT && lparam & PRF_NONCLIENT as isize != 0))
+    {
+        use windows_sys::Win32::Graphics::Gdi::{GetWindowDC, ReleaseDC};
+        let hdc = match msg {
+            WM_PRINT => wparam as HDC,
+            _ => unsafe { GetWindowDC(hwnd) },
+        };
+        if !hdc.is_null() {
+            paint_frame(hwnd, hdc);
+            if msg != WM_PRINT {
+                unsafe { ReleaseDC(hwnd, hdc) };
+            }
+        }
+    }
+    result
+}
+
+fn paint_frame(hwnd: HWND, hdc: HDC) {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{DeleteObject, FrameRect};
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let mut rect = RECT::default();
+    unsafe {
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return;
+        }
+        rect.right -= rect.left;
+        rect.bottom -= rect.top;
+        rect.left = 0;
+        rect.top = 0;
+        let brush = CreateSolidBrush(DARK_BORDER_COLOR);
+        for _ in 0..2 {
+            FrameRect(hdc, &rect, brush);
+            rect.left += 1;
+            rect.top += 1;
+            rect.right -= 1;
+            rect.bottom -= 1;
+        }
+        DeleteObject(brush as _);
     }
 }
 
@@ -302,6 +390,70 @@ pub fn erase_background(hwnd: HWND, hdc: HDC) -> LRESULT {
     1
 }
 
+/// List views expose no grid color setter. Draw muted separators after the
+/// native rows so selection, scrolling and owner-data behavior stay native.
+fn paint_grid(hwnd: HWND, hdc: HDC) {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::MapWindowPoints;
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreatePen, DeleteObject, IntersectClipRect, LineTo, MoveToEx, PS_SOLID, RestoreDC, SaveDC,
+        SelectObject,
+    };
+    use windows_sys::Win32::UI::Controls::{
+        HDM_GETITEMCOUNT, HDM_GETITEMRECT, LVM_GETCOUNTPERPAGE, LVM_GETHEADER, LVM_GETITEMCOUNT,
+        LVM_GETITEMRECT, LVM_GETTOPINDEX,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
+    unsafe {
+        let mut client = RECT::default();
+        GetClientRect(hwnd, &mut client);
+        let header = SendMessageW(hwnd, LVM_GETHEADER, 0, 0) as HWND;
+        let mut header_rect = RECT::default();
+        GetClientRect(header, &mut header_rect);
+        MapWindowPoints(header, hwnd, &mut header_rect as *mut _ as _, 2);
+        let saved = SaveDC(hdc);
+        if saved == 0 {
+            return;
+        }
+        IntersectClipRect(
+            hdc,
+            client.left,
+            header_rect.bottom,
+            client.right,
+            client.bottom,
+        );
+        let pen = CreatePen(PS_SOLID, 1, DARK_GRID_COLOR);
+        let old_pen = SelectObject(hdc, pen as _);
+        let first = SendMessageW(hwnd, LVM_GETTOPINDEX, 0, 0) as usize;
+        let visible = SendMessageW(hwnd, LVM_GETCOUNTPERPAGE, 0, 0) as usize + 1;
+        let count = SendMessageW(hwnd, LVM_GETITEMCOUNT, 0, 0) as usize;
+        for index in first..count.min(first + visible) {
+            let mut rect = RECT::default(); // left = LVIR_BOUNDS (0)
+            if SendMessageW(hwnd, LVM_GETITEMRECT, index, &mut rect as *mut _ as isize) != 0 {
+                MoveToEx(hdc, client.left, rect.bottom - 1, std::ptr::null_mut());
+                LineTo(hdc, client.right, rect.bottom - 1);
+            }
+        }
+        let columns = SendMessageW(header, HDM_GETITEMCOUNT, 0, 0) as usize;
+        for index in 0..columns {
+            let mut rect = RECT::default();
+            if SendMessageW(header, HDM_GETITEMRECT, index, &mut rect as *mut _ as isize) != 0 {
+                MapWindowPoints(header, hwnd, &mut rect as *mut _ as _, 2);
+                MoveToEx(
+                    hdc,
+                    rect.right - 1,
+                    header_rect.bottom,
+                    std::ptr::null_mut(),
+                );
+                LineTo(hdc, rect.right - 1, client.bottom);
+            }
+        }
+        SelectObject(hdc, old_pen);
+        DeleteObject(pen as _);
+        RestoreDC(hdc, saved);
+    }
+}
+
 /// Native buttons do not consistently support dark text/background colors
 /// on Windows 10. Custom draw keeps their native input and accessibility.
 pub fn paint_notification(lparam: LPARAM) -> Option<LRESULT> {
@@ -326,7 +478,21 @@ pub fn paint_notification(lparam: LPARAM) -> Option<LRESULT> {
         }
         let mut class = [0u16; 32];
         let len = GetClassNameW(hdr.hwndFrom, class.as_mut_ptr(), class.len() as i32);
-        if String::from_utf16_lossy(&class[..len as usize]) != "Button" {
+        let class = String::from_utf16_lossy(&class[..len as usize]);
+        if class == "SysListView32" {
+            let draw = &*(lparam as *const NMCUSTOMDRAW);
+            return match draw.dwDrawStage {
+                CDDS_PREPAINT => {
+                    Some(windows_sys::Win32::UI::Controls::CDRF_NOTIFYPOSTPAINT as LRESULT)
+                }
+                windows_sys::Win32::UI::Controls::CDDS_POSTPAINT => {
+                    paint_grid(hdr.hwndFrom, draw.hdc);
+                    Some(0)
+                }
+                _ => Some(0),
+            };
+        }
+        if class != "Button" {
             return None;
         }
         let draw = &*(lparam as *const NMCUSTOMDRAW);
@@ -335,9 +501,13 @@ pub fn paint_notification(lparam: LPARAM) -> Option<LRESULT> {
         }
         let mut rect = draw.rc;
         FillRect(draw.hdc, &rect, bg_brush());
-        let border = CreateSolidBrush(0x00808080);
         let checkbox =
             GetWindowLongPtrW(hdr.hwndFrom, GWL_STYLE) as u32 & 0xF == BS_AUTOCHECKBOX as u32;
+        let border_color = match checkbox {
+            true => DARK_CHECKBOX_COLOR,
+            false => DARK_BORDER_COLOR,
+        };
+        let border = CreateSolidBrush(border_color);
         let align = if checkbox {
             let mut check = rect;
             check.top += (rect.bottom - rect.top - 13) / 2;
@@ -345,11 +515,22 @@ pub fn paint_notification(lparam: LPARAM) -> Option<LRESULT> {
             check.right = check.left + 13;
             FrameRect(draw.hdc, &check, border);
             if SendMessageW(hdr.hwndFrom, BM_GETCHECK, 0, 0) == 1 {
-                check.left += 3;
-                check.right -= 3;
-                check.top += 3;
-                check.bottom -= 3;
+                use windows_sys::Win32::Graphics::Gdi::{
+                    CreatePen, LineTo, MoveToEx, PS_SOLID, SelectObject,
+                };
                 FillRect(draw.hdc, &check, border);
+                let pen = CreatePen(PS_SOLID, 2, bg_color());
+                let old_pen = SelectObject(draw.hdc, pen as _);
+                MoveToEx(
+                    draw.hdc,
+                    check.left + 3,
+                    check.top + 6,
+                    std::ptr::null_mut(),
+                );
+                LineTo(draw.hdc, check.left + 5, check.top + 9);
+                LineTo(draw.hdc, check.left + 10, check.top + 3);
+                SelectObject(draw.hdc, old_pen);
+                DeleteObject(pen as _);
             }
             rect.left += 20;
             DT_LEFT

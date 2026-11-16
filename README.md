@@ -119,6 +119,17 @@ MSRs of every physical core twice a second, like HWiNFO:
   readout, `TjMax` from `IA32_TEMPERATURE_TARGET`), package temperature and
   effective clock (APERF/MPERF).
 
+## Application icon
+
+The executable embeds `assets/activity-tracker.ico`, a transparent, 32-bit
+icon with ten sizes from 16 to 256 px for Explorer, shortcuts and the
+application windows. Preview: `assets/activity-tracker.png`.
+To regenerate both files on Windows (no extra dependencies):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File assets/generate-icon.ps1
+```
+
 ## Tests and diagnostics
 
 ```bash
