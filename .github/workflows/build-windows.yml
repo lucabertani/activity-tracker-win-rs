@@ -66,9 +66,9 @@ jobs:
 
   # Releases are created only on manual runs, where the version input
   # exists: title "activity tracker v<version>", tag "v<version>".
-  # The driver/ folder ships with the release so users can install the
-  # MSR driver without cloning the repo. Both the full and the light
-  # executable are attached.
+  # Each variant (full and light) is attached as a zip containing the
+  # executable plus the driver/ folder, so users can install the MSR
+  # driver without cloning the repo. Zipping makes downloads smaller.
   release:
     needs: build-windows
     if: github.event_name == 'workflow_dispatch'
@@ -84,12 +84,22 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Create zip archives
+        shell: pwsh
+        run: |
+          foreach ($exe in @('activity-tracker-win-rs', 'activity-tracker-win-rs-light')) {
+            $stage = "stage/$exe"
+            New-Item -ItemType Directory -Force -Path $stage | Out-Null
+            Copy-Item "dist/$exe.exe" "$stage/$exe.exe"
+            Copy-Item driver "$stage/driver" -Recurse
+            Compress-Archive -Path "$stage/*" -DestinationPath "dist/$exe-windows-x64.zip" -CompressionLevel Optimal
+          }
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.event.inputs.version }}
           name: "activity tracker v${{ github.event.inputs.version }}"
           files: |
-            dist/activity-tracker-win-rs.exe
-            dist/activity-tracker-win-rs-light.exe
-            driver/
+            dist/activity-tracker-win-rs-windows-x64.zip
+            dist/activity-tracker-win-rs-light-windows-x64.zip

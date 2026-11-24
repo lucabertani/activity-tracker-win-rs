@@ -10,11 +10,11 @@ icon to sort, double-click a group (or press Enter) to expand it, `Del`
 terminates the selection, `Ctrl+F` searches. Settings open in a side panel
 and apply immediately.
 
-> **Don't want to compile?** Grab a prebuilt executable from the
+> **Don't want to compile?** Grab a prebuilt zip from the
 > [latest release](https://github.com/lucabertani/activity-tracker-win-rs/releases/latest)
-> (self-contained, no VC++ redistributable needed):
-> - `activity-tracker-win-rs.exe` — both GUIs, switchable in Settings (~30 MB).
-> - `activity-tracker-win-rs-light.exe` — Win32 GUI only, no GPUI compiled
+> (self-contained, no VC++ redistributable needed; unzip and run):
+> - `activity-tracker-win-rs-windows-x64.zip` — both GUIs, switchable in Settings (~30 MB).
+> - `activity-tracker-win-rs-light-windows-x64.zip` — Win32 GUI only, no GPUI compiled
 >   in, much smaller (~1 MB). There is only one interface to pick from, so
 >   the "switch interface" option is hidden.
 >
@@ -49,8 +49,9 @@ With this feature set the "Use the new interface" / "New interface" toggle
 is hidden automatically in both GUIs (`can_switch_ui`), since GPUI isn't
 compiled in to switch to. The GitHub Actions workflow
 (`.github/workflows/build-windows.yml`) builds both variants on every run
-and, on release, attaches `activity-tracker-win-rs.exe` and
-`activity-tracker-win-rs-light.exe` to the same GitHub release.
+and, on release, attaches `activity-tracker-win-rs-windows-x64.zip` and
+`activity-tracker-win-rs-light-windows-x64.zip` (exe + `driver/` folder) to the
+same GitHub release.
 
 Code layout (Cargo workspace):
 
