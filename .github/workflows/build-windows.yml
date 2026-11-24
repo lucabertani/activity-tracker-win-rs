@@ -43,6 +43,11 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.variant }}
+
       # Static CRT linking (+crt-static) so the exe is fully standalone:
       # no VC++ redistributable needed on the target machine.
       - name: Build release (static CRT)
