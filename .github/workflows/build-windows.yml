@@ -18,6 +18,22 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          # Full build: both frontends (GPUI + Win32), switchable at
+          # runtime/settings. This is the default `cargo build --release`.
+          - variant: full
+            cargo-args: ""
+            exe-name: activity-tracker-win-rs.exe
+            artifact-name: activity-tracker-win-rs-windows-x64
+          # Light build: Win32 GUI only, no GPUI compiled in at all, much
+          # smaller executable. The in-app "switch interface" option is
+          # automatically hidden since there is only one GUI to pick from.
+          - variant: light
+            cargo-args: "--no-default-features --features gui-win32"
+            exe-name: activity-tracker-win-rs-light.exe
+            artifact-name: activity-tracker-win-rs-light-windows-x64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,24 +48,48 @@ jobs:
       - name: Build release (static CRT)
         env:
           RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc ${{ matrix.cargo-args }}
+
+      - name: Rename executable
+        if: matrix.exe-name != 'activity-tracker-win-rs.exe'
+        shell: pwsh
+        run: |
+          Copy-Item `
+            target/x86_64-pc-windows-msvc/release/activity-tracker-win-rs.exe `
+            target/x86_64-pc-windows-msvc/release/${{ matrix.exe-name }}
 
       - name: Upload standalone executable
         uses: actions/upload-artifact@v4
         with:
-          name: activity-tracker-win-rs-windows-x64
-          path: target/x86_64-pc-windows-msvc/release/activity-tracker-win-rs.exe
+          name: ${{ matrix.artifact-name }}
+          path: target/x86_64-pc-windows-msvc/release/${{ matrix.exe-name }}
 
-      # Releases are created only on manual runs, where the version input
-      # exists: title "activity tracker v<version>", tag "v<version>".
-      # The driver/ folder ships with the release so users can install the
-      # MSR driver without cloning the repo.
+  # Releases are created only on manual runs, where the version input
+  # exists: title "activity tracker v<version>", tag "v<version>".
+  # The driver/ folder ships with the release so users can install the
+  # MSR driver without cloning the repo. Both the full and the light
+  # executable are attached.
+  release:
+    needs: build-windows
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download executables
+        uses: actions/download-artifact@v4
+        with:
+          pattern: activity-tracker-win-rs*-windows-x64
+          path: dist
+          merge-multiple: true
+
       - name: Create GitHub release
-        if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.event.inputs.version }}
           name: "activity tracker v${{ github.event.inputs.version }}"
           files: |
-            target/x86_64-pc-windows-msvc/release/activity-tracker-win-rs.exe
+            dist/activity-tracker-win-rs.exe
+            dist/activity-tracker-win-rs-light.exe
             driver/

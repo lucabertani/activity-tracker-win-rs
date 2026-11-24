@@ -10,9 +10,14 @@ icon to sort, double-click a group (or press Enter) to expand it, `Del`
 terminates the selection, `Ctrl+F` searches. Settings open in a side panel
 and apply immediately.
 
-> **Don't want to compile?** Grab the prebuilt executable from the
+> **Don't want to compile?** Grab a prebuilt executable from the
 > [latest release](https://github.com/lucabertani/activity-tracker-win-rs/releases/latest)
-> (`activity-tracker-win-rs.exe`, self-contained, no VC++ redistributable needed).
+> (self-contained, no VC++ redistributable needed):
+> - `activity-tracker-win-rs.exe` — both GUIs, switchable in Settings (~30 MB).
+> - `activity-tracker-win-rs-light.exe` — Win32 GUI only, no GPUI compiled
+>   in, much smaller (~1 MB). There is only one interface to pick from, so
+>   the "switch interface" option is hidden.
+>
 > Real temperatures need the free [PawnIO](https://pawnio.eu) driver, installed
 > separately — see
 > [below](#cpu-temperature-and-thermal-throttling-driver).
@@ -32,12 +37,20 @@ cargo build --release
 Resulting executable: `target\release\activity-tracker-win-rs.exe`
 (self-contained, no VC++ redistributable needed).
 
-The first build compiles GPUI and takes a few minutes. To build only the
-small legacy Win32 GUI:
+The first build compiles GPUI and takes a few minutes, and the resulting
+executable is the bigger one (~30 MB). To build the small, Win32-only
+"light" executable instead (no GPUI code compiled in at all, ~1 MB):
 
 ```bash
 cargo build --release --no-default-features --features gui-win32
 ```
+
+With this feature set the "Use the new interface" / "New interface" toggle
+is hidden automatically in both GUIs (`can_switch_ui`), since GPUI isn't
+compiled in to switch to. The GitHub Actions workflow
+(`.github/workflows/build-windows.yml`) builds both variants on every run
+and, on release, attaches `activity-tracker-win-rs.exe` and
+`activity-tracker-win-rs-light.exe` to the same GitHub release.
 
 Code layout (Cargo workspace):
 
